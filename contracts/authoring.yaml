@@ -1,0 +1,1815 @@
+openapi: 3.1.0
+
+# Hand-written, per implementation plan §5.5 (deviation D-d), not generated.
+#
+# Generating it from the handlers would make the spec a *description* of whatever
+# the code currently does, which cannot disagree with the code and therefore
+# cannot catch a change nobody meant to make. Written by hand it is a second
+# statement of the contract, and `OpenApiSpecTest` fails the build when the two
+# drift.
+#
+# ⚠️ That test currently asserts **coverage** — every routed path and method
+# appears here, and nothing here is unrouted. It does not yet validate response
+# *bodies* against these schemas, which needs a validator dependency. §5.5 asks
+# for that too; until it lands, treat the schemas below as reviewed documentation
+# rather than as enforced.
+
+info:
+  title: Coho Authoring API
+  version: "0.3.0"
+  description: |
+    The authoring surface: projects, refs, branches, content types, entries,
+    diff and merge.
+
+    **This API is private.** Authentication is an unverified `X-Coho-Actor`
+    header by design (D23) — a BFF in front of it owns sessions, tokens and IdP
+    integration. Exposed to the internet it is total impersonation of every actor
+    in every tenant, and every request still looks legitimate. The network
+    boundary is the authentication control.
+
+    **Branch on `code`, not on status.** Domain failures are all `400` with a
+    stable `code`; only failures where a standard HTTP mechanism depends on the
+    status (401/403/404/412/428) keep a specific one.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development (Compose)
+
+security:
+  - actorHeader: []
+
+tags:
+  - name: Projects
+  - name: Refs
+  - name: Branches
+  - name: Tags
+  - name: Export
+  - name: Promotion
+  - name: Types
+  - name: Entries
+  - name: Diff and merge
+
+paths:
+
+  /v1/projects:
+    post:
+      tags: [Projects]
+      summary: Create and bootstrap a project
+      description: |
+        Creates the trunk `v0.0.x` and four environments (`dev` live, the rest
+        unset). Requires **membership of the target organization** (V12); a
+        non-member gets `404`, not `403`, because an organization id is supplied
+        rather than received and a `403` would make this an enumeration oracle.
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404':
+          $ref: '#/components/responses/Problem'
+          description: Not a member of that organization — or it does not exist. Deliberately indistinguishable.
+
+  /v1/projects/{project}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Projects]
+      summary: One project
+      operationId: getProject
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Refs]
+      summary: Every ref in the project
+      description: One namespace across branches, tags and environments (D15).
+      operationId: listRefs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Refs]
+      summary: One ref
+      description: |
+        An **unset** environment is a `200` here with a null target — the ref
+        exists, it just points nowhere yet. That deliberately differs from the
+        content endpoints, where the same ref is a `404` because there is nothing
+        to resolve. Both are correct; they answer different questions.
+      operationId: getRef
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefDto' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [Refs]
+      summary: Revise a ref's description
+      description: |
+        The description only. A name is an identity other refs point at, and a
+        tag's coordinate is the thing it exists to freeze — so this leaves tag
+        immutability untouched.
+
+        **The permission depends on the ref's kind.** A branch needs
+        `content:write`; a tag needs `release:tag`; an environment needs
+        `promote:{tier}` for its own tier. Who may describe a ref is who may have
+        made it.
+
+        A blank description is the same as omitting it: the description is
+        cleared.
+      operationId: updateRef
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRefRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefDto' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/branches:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Branches]
+      summary: Every branch, with depth
+      operationId: listBranches
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Branches]
+      summary: Create a branch
+      description: |
+        O(1) and copies nothing (N3). Requires `branch:create`; a **version**
+        branch additionally requires `branch:create_version` (Q10), re-checked in
+        the handler once `kind` is parsed.
+      operationId: createBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBranchRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/export:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: A tag or a branch. Environments and unset refs are `404`.
+      - name: format
+        in: query
+        schema: { type: string, enum: [ndjson, tar], default: ndjson }
+      - name: stream
+        in: query
+        schema: { type: boolean }
+        description: |
+          Force bytes through the API instead of a redirect, for clients that
+          cannot follow one.
+    get:
+      tags: [Export]
+      summary: Export a tag or a branch
+      description: |
+        Requires `content:read` — an export shows what a reader can already see.
+
+        **A tag serves the image the build already wrote.** Stage 1 produces
+        `image.ndjson` at tag time, so export is serving a file rather than running
+        a job. Responds `302` to a short-lived presigned URL by default: a large
+        export should not occupy an API thread or transit the authoring tier, and
+        the artifact is immutable, so a signed URL is exactly the right shape.
+
+        If the image has been evicted (§4.4 tier 2), export enqueues a rebuild and
+        returns `SNAPSHOT_NOT_READY` with the state — the same mechanism, error and
+        client behaviour as promotion, with nothing export-specific.
+
+        **A branch computes one, and it is not persisted** — no snapshot row, no
+        stable path, nothing to evict. ⚠️ A branch tip *moves*, so the response
+        records the sequence it was resolved at in `X-Coho-Export-Seq` and in the
+        manifest: two developers pulling an hour apart otherwise get different
+        content while believing they are in sync. It is priced as authoring work —
+        a full overlay resolution with no artifact to copy from — so it is
+        deliberately not free to trigger.
+
+        ⚠️ **Nothing exported in M4 is importable** (M4-9). The manifest says so
+        explicitly rather than leaving an SDK to imply a round trip it cannot make.
+      operationId: exportRef
+      responses:
+        '200':
+          description: |
+            The export, streamed. `ndjson` for the image, JSON for `tar`'s manifest.
+          headers:
+            X-Coho-Export-Seq:
+              schema: { type: integer, format: int64 }
+              description: |
+                The sequence this export was resolved at. Present for a branch,
+                which is the case where it is load-bearing.
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportManifest' }
+        '302':
+          description: |
+            A presigned object-storage URL. The default for a tag when the store
+            can issue one.
+          headers:
+            Location:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/tiers:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Promotion]
+      summary: The promotion pipeline, in order
+      operationId: listTiers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TierListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Promotion]
+      summary: Define a tier
+      description: |
+        Requires `workflow:write` — **`owner` only** (M6-7). Locked down because a
+        tier determines the grant that guards the environments in it, so editing
+        the workflow is grant assignment wearing different clothes.
+
+        `resolves` is immutable after creation (M6-2): flipping it on a populated
+        tier would leave every environment in it pointing at the wrong kind of ref.
+      operationId: createTier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTierRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TierDto' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/tiers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Promotion]
+      summary: Remove an empty tier
+      description: |
+        Requires `workflow:write`. Only an empty tier may be deleted —
+        `TIER_NOT_EMPTY` names the environments still holding it open.
+      operationId: deleteTier
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/environments:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Promotion]
+      summary: Every environment, in pipeline order
+      operationId: listEnvironments
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Promotion]
+      summary: Create an environment in a tier
+      description: |
+        Requires `promote:{tier}` **of the tier it is created in** (M6-7) — not
+        `workflow:write`. That split closes the delete-and-recreate escalation
+        structurally: you may only create environments in tiers you can already
+        promote to, so no environment operation confers a capability you lacked.
+
+        The tier is fixed at creation and immutable afterwards (M6-2). Refused
+        with `LIVE_ENVIRONMENT_LIMIT` if the project is at its cap of live
+        environments on non-root branches (M6-5).
+      operationId: createEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEnvironmentRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/environments/{env}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: env
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Promotion]
+      summary: Repoint an environment — promote, or roll back
+      description: |
+        Requires `promote:{tier}` of the environment's tier. D16: this is a
+        different decision from `release:tag`, made by a different person.
+
+        **There is no rollback endpoint** (M6-9). Rolling back is this call
+        pointed at a previous tag, so the two are indistinguishable in
+        `ref_history` and a reader sees a straight sequence of where the
+        environment pointed and when. A rollback should carry `expectedTarget` —
+        that is precisely when you want "only if `prod` is still on the tag I
+        think is broken".
+
+        Ordering is advisory (M6-3): promoting past a tier succeeds and returns a
+        non-blocking warning, because a hard gate would make the hotfix flow
+        illegal. The permission ladder is the gate.
+      operationId: promoteEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteEnvironmentRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Promotion]
+      summary: Remove an environment
+      description: |
+        Requires `promote:{tier}`. Deliberately allowed, unlike a tag (M4-3g) —
+        that asymmetry is the point of the tag/environment split: tags are the
+        record, environments are the thing that moves.
+
+        The removal is auditable: V15 made `ref_history.to_target` nullable so a
+        deletion appears in the trail rather than vanishing from it.
+      operationId: deleteEnvironment
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/environments/{env}/history:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: env
+        in: path
+        required: true
+        schema: { type: string }
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+    get:
+      tags: [Promotion]
+      summary: Where this environment has pointed, newest first
+      description: |
+        What "one-click rollback" actually needs (M6-9): history, not a verb. The
+        UI reads the previous target from here and issues the repoint.
+
+        A `to` of `null` means the environment was unset or removed.
+      operationId: environmentHistory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefHistoryResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/tags:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    post:
+      tags: [Tags]
+      summary: Cut a tag
+      description: |
+        Stamps an immutable `(branch, seq)` coordinate. Requires `release:tag`,
+        which D16 keeps distinct from `promote:{tier}` — producing the artifact
+        is a different decision, made by a different person, from deploying it.
+
+        **Does not merge and does not validate** (M4-3c). Invariant V1 — a
+        version branch tip is always valid — is what makes that safe: writes
+        validate against their governing type version, and merge re-validates
+        against the target's schema (R5.5), so a tag has nothing left to check.
+        Move content with `POST /merges` first; the two are independent verbs.
+
+        Only **version** branches may be tagged (D21). There is no `PUT` and no
+        `DELETE`: a tag is immutable and undeletable (M4-3g), being at once a GC
+        root, a snapshot cache key and the rollback record.
+      operationId: createTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTagRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+              description: The new tag, as a ref.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/diff:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: from
+        in: query
+        required: true
+        schema: { type: string }
+        description: The target side of a prospective merge.
+      - name: to
+        in: query
+        required: true
+        schema: { type: string }
+        description: The source side — the branch under review.
+      - name: mode
+        in: query
+        schema:
+          type: string
+          enum: [diverged, absolute]
+          default: diverged
+    get:
+      tags: [Diff and merge]
+      summary: Compare two branches, and preview the merge
+      description: |
+        `diverged` (default, three-dot) compares `to` against the point the two
+        **diverged**; `absolute` (two-dot) compares the tips. Two-dot reports
+        every change the target made that the branch does not have, as though the
+        branch reverted them — which is why it is not the default.
+
+        In `diverged` mode the response also carries `conflicts` and a
+        `mergeToken`: what would conflict if `to` were merged into `from`, and
+        the coordinate to hand back as `expectedToken`.
+      operationId: diff
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiffResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/merges:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    post:
+      tags: [Diff and merge]
+      summary: Three-way merge one branch into another
+      description: |
+        Lands whole or is refused whole — there is no partial merge. Requires
+        `merge`.
+
+        Conflicts the store will not settle are reported on the problem document
+        with `nodeId` and key-based `paths`; answer them with `resolutions` on the
+        same coordinates. `expectedToken` is the review precondition.
+      operationId: merge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MergeRequest' }
+      responses:
+        '200':
+          description: Merged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MergeResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/types:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Types]
+      summary: Content types as resolved on this ref
+      operationId: listTypes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/types/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Types]
+      summary: One content type
+      operationId: getType
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Types]
+      summary: Create or update a content type
+      description: |
+        Requires `content:write`. On update, `If-Match` is required — a missing
+        precondition is `428`, a stale one `412`.
+
+        A **destructive** change (removing a field, narrowing a type, dropping a
+        locale) is refused unless `confirmDestructive` is set. R1.3's two-phase
+        ritual: omit the field first, remove it later.
+      operationId: putType
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutTypeRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeResponse' }
+        '200':
+          description: Updated
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Types]
+      summary: Tombstone a content type
+      description: |
+        Refused while entries still resolve to it — they would be orphaned and
+        invisible. `?confirmDestructive=true` orphans them deliberately.
+      operationId: deleteType
+      parameters:
+        - name: confirmDestructive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/entries:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Entries]
+      summary: List entries on this ref
+      description: |
+        Paginated. `limit` defaults to 100 and is capped at 1000; a value outside
+        that range is **refused rather than clamped**, because silently returning
+        1000 to a caller who asked for 5000 makes them believe they hold the whole
+        set — the one failure a paginated client cannot detect.
+
+        No collection total is reported: producing one means resolving the whole
+        overlay and counting it, which is the work pagination exists to avoid.
+        `page.hasMore` answers the only question a paging client has.
+      operationId: listEntries
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string }
+          description: Filter to one content type, by slug.
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Entries]
+      summary: Create an entry
+      description: Requires `content:write`. The slug is stamped by the writer, never taken from the document.
+      operationId: createEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEntryRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/entries/{id}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - $ref: '#/components/parameters/entryId'
+    get:
+      tags: [Entries]
+      summary: One entry as resolved on this ref
+      operationId: getEntry
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Entries]
+      summary: Update an entry
+      description: |
+        Requires `content:write` and `If-Match`. Identity (`_slug`) carries
+        forward automatically — an update sends content, not identity.
+      operationId: putEntry
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      responses:
+        '200':
+          description: Updated
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutEntryRequest' }
+    delete:
+      tags: [Entries]
+      summary: Tombstone an entry
+      description: Never a physical delete (N7). The tombstone is a new version with its own ETag.
+      operationId: deleteEntry
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      responses:
+        '204':
+          description: Deleted
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/entries/{id}/references:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - $ref: '#/components/parameters/entryId'
+    get:
+      tags: [Entries]
+      summary: What points at this node, on this ref
+      description: |
+        Incoming links only — outgoing ones are already in the document and need
+        no endpoint, whereas the reverse direction needs an index (V13).
+
+        **Per-ref**, because an edge belongs to a *version* and which versions a
+        ref can see is a resolution question. A bare index read would report links
+        from versions this branch cannot see, or has since superseded.
+
+        It **reports and never refuses**. Referential integrity is deliberately
+        not enforced by this tier: a dangling reference is incomplete rather than
+        corrupt, and is legal per-ref while a target waits to be merged. What the
+        layer above does with twelve incoming links before a delete is its call.
+
+        The target does not have to resolve — asking about a node this ref has
+        deleted is exactly when someone wants to.
+      operationId: entryReferences
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferencesResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/entries/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - $ref: '#/components/parameters/entryId'
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+    get:
+      tags: [Entries]
+      summary: One entry's version history on this ref
+      description: |
+        **Per-ref, and that is the design.** A node's versions are global but
+        their visibility is not: a version written on a sibling branch is not this
+        ref's history, and one written on the parent after the branch point is
+        invisible here for the same reason it does not resolve. A feature branch
+        shows the trunk's history up to the branch point, then its own edits.
+
+        Ordered by `seq` descending — commit order, not wall-clock (D20).
+        Tombstones are included: a delete is an event in a node's history, never
+        an omission from it (N7). A deleted entry still has one.
+      operationId: entryHistory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/delivery-keys:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    post:
+      tags: [Delivery keys]
+      summary: Issue a delivery key
+      description: |
+        Mints an opaque key for the delivery API (doc 16 AU-3) and publishes its
+        **hash** to the project's key document. Requires `delivery:keys`, seeded
+        to `owner` alone: this is the only surface that decides who *outside* the
+        project may read what it has published.
+
+        ⚠️ **The key is in this response and in no other, ever.** Only the hash is
+        stored (AU-4), so a caller that loses it issues another rather than
+        retrieving this one.
+
+        Omit `refs` to grant every ref in the project; name refs to narrow the
+        key to those. `expiresInDays` bounds a leak nobody notices, which
+        revocation cannot.
+      operationId: issueDeliveryKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueDeliveryKeyRequest' }
+      responses:
+        '201':
+          description: Created. The only time the key is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssuedDeliveryKeyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    get:
+      tags: [Delivery keys]
+      summary: List delivery keys and public refs
+      description: |
+        Metadata only — never the key, and never its hash. Guarded as tightly as
+        issuing, because the listing says who holds access to what.
+      operationId: listDeliveryKeys
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryKeyListResponse' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/delivery-keys/public:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    put:
+      tags: [Delivery keys]
+      summary: Set which refs are readable without a key
+      description: |
+        Replaces the set wholesale, because "what is public" is a thing an
+        operator should be able to state in one request and read back in one
+        response.
+
+        ⚠️ **Environments only** (doc 20 DT-3), and the opt-in covers that
+        *name*: the tag an open `prod` points at stays key-required when
+        addressed directly, or a release candidate nobody promoted would be
+        readable by whoever guessed its name.
+      operationId: setPublicDeliveryRefs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicRefsRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryKeyListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/delivery-keys/{keyId}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: keyId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Delivery keys]
+      summary: Revoke a delivery key
+      description: |
+        Rewrites the key document without that hash and touches the global
+        marker every delivery instance polls, so the key stops working in about
+        two seconds rather than at the end of the document TTL (doc 20 AU-9).
+      operationId: revokeDeliveryKey
+      responses:
+        '204': { description: Revoked }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/roles:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Roles]
+      summary: Who holds what in this project
+      description: |
+        Requires `role:grant`, seeded to `owner` alone — who holds access to a
+        project is the first thing somebody planning to misuse it would read.
+
+        ⚠️ **Ids, never names.** This tier reads `auth.actor` to authorize a
+        request and deliberately does not become a directory: a display name
+        here would put personal data in every project's administrative surface
+        and in every export. Join names from the auth API, where the person can
+        also be erased.
+      operationId: listProjectRoles
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRoleListResponse' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/roles/{actorId}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: actorId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The actor's id — `actor.id`, not the credential-shaped `external_id`.
+    put:
+      tags: [Roles]
+      summary: Grant or change a role
+      description: |
+        `PUT` because the outcome is a state — *this actor holds `maintainer`* —
+        so repeating it changes the role rather than adding a second grant.
+
+        Refuses a role the seeded ladder does not define, and an actor who is
+        **not a member of the project's account**: such a grant counts for
+        nothing (UL-1), so storing it would be harmless and misleading at once.
+
+        ⚠️ There is no "a project must keep an owner" rule, unlike the account
+        level: an org admin holds implied owner on every project, so a project
+        whose grants went wrong is always repairable from the account.
+      operationId: grantProjectRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantRoleRequest' }
+      responses:
+        '200':
+          description: The grant as it now stands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRole' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Roles]
+      summary: Revoke a grant
+      description: |
+        Removes **this project's** grant and nothing else. An account admin still
+        reaches the project through implied owner; taking that away is a change
+        to their account role, which the auth API owns.
+      operationId: revokeProjectRole
+      responses:
+        '204': { description: Revoked }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+components:
+
+  securitySchemes:
+    actorHeader:
+      type: apiKey
+      in: header
+      name: X-Coho-Actor
+      description: |
+        The actor's `external_id`. **Unverified** — whoever can reach this
+        service can present any actor's id and be that actor. Must be opaque and
+        unguessable (≥128 bits, minted by the BFF); never an email, username or
+        IdP `sub`, and never a UUIDv7, whose leading bits are a predictable
+        timestamp.
+
+  parameters:
+    project:
+      name: project
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ref:
+      name: ref
+      in: path
+      required: true
+      schema: { type: string }
+      description: |
+        A branch, tag or environment — one namespace (D15). Branch names contain
+        slashes, so the segment must be URL-encoded (`feature/x` → `feature%2Fx`).
+    entryId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ifMatch:
+      name: If-Match
+      in: header
+      schema: { type: string }
+      description: The ETag from the read this write is based on. Required on updates and deletes.
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  headers:
+    ETag:
+      schema: { type: string }
+      description: The `node_version.id` that produced this response, quoted.
+
+  responses:
+    Problem:
+      description: RFC 9457 problem document. Branch on `code`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      required: [code, type, title, status]
+      properties:
+        code:
+          type: string
+          description: The stable token clients branch on.
+          examples: [VALIDATION_FAILED, MERGE_CONFLICT, SLUG_CONFLICT]
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }
+        ref: { type: string }
+        slug: { type: string }
+        permission: { type: string }
+        header: { type: string }
+        depth: { type: integer }
+        maxDepth: { type: integer }
+        entryCount: { type: integer }
+        expectedVersion: { type: string }
+        currentVersion: { type: string }
+        conflicts:
+          type: array
+          items: { $ref: '#/components/schemas/MergeConflictDto' }
+
+    CreateProjectRequest:
+      type: object
+      required: [organizationId, name]
+      properties:
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+
+    ProjectResponse:
+      type: object
+      required: [id, name, trunk, environments]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        trunk: { type: string }
+        environments:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+              target: { type: [string, 'null'] }
+
+    RefDto:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string }
+        kind:
+          type: string
+          enum: [version_branch, feature_branch, tag, environment]
+        target: { type: string }
+        description:
+          type: string
+          maxLength: 2000
+          description: |
+            What this ref is for. On a tag this is release notes — a list of tag
+            names alone says nothing about what shipped.
+
+            Not to be confused with `RefHistoryDto.reason`, which records why one
+            promotion happened. This one is standing and revisable.
+
+    UpdateRefRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          maxLength: 2000
+          description: Blank or omitted clears it.
+
+    RefListResponse:
+      type: object
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          items: { $ref: '#/components/schemas/RefDto' }
+
+    CreateBranchRequest:
+      type: object
+      required: [name, from]
+      properties:
+        description:
+          type: string
+          maxLength: 2000
+        name: { type: string }
+        from:
+          type: string
+          description: A branch tip or a tag — branching from either costs the same (R3.10).
+        kind:
+          type: string
+          enum: [feature_branch, version_branch]
+          default: feature_branch
+        at:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Branch at an explicit **sequence** — the project's own commit id,
+            allocated under a row lock so seq order is commit order (D20).
+
+            Not a timestamp: same-millisecond writes have no wall-clock order and
+            clock skew can invert them, and a branch point is permanent (D10), so
+            an approximate one could never be corrected. Round-trips with
+            `BranchResponse.branchedAt`.
+
+            Rejected above the project's high-water mark, and rejected alongside a
+            tag in `from` — a tag is already a fixed `(branch, seq)` coordinate.
+
+    Warning:
+      type: object
+      required: [code, message]
+      description: |
+        A non-blocking advisory on an otherwise successful response. One array,
+        two producers (M6-10) — the skipped-tier warning and pending forward
+        ports — so a client renders warnings uniformly.
+      properties:
+        code: { type: string, enum: [SKIPPED_TIER, PENDING_FORWARD_PORT] }
+        message: { type: string }
+
+    ExportManifest:
+      type: object
+      required: [project, ref, seq, nodeCount, localeSet, schemaVersionSet, contentHash, formatVersion, importable]
+      properties:
+        project: { type: string, format: uuid }
+        ref: { type: string }
+        seq:
+          type: integer
+          format: int64
+          description: |
+            The coordinate this export represents. For a branch this is what makes
+            the export reproducible at all, and what keeps a future import able to
+            compute merge bases.
+        nodeCount: { type: integer }
+        localeSet:
+          type: array
+          items: { type: string }
+          description: The union of locale keys across every localized field (M4-15).
+        schemaVersionSet:
+          type: array
+          items: { type: string }
+        contentHash:
+          type: string
+          description: |
+            SHA-256 over the canonical image. Also the delivery `ETag` for a tag —
+            the artifact is immutable, so the two are the same fact.
+        formatVersion: { type: integer }
+        importable:
+          type: boolean
+          description: |
+            Always `false` in M4. Stated rather than omitted (M4-9), so an SDK does
+            not imply a round trip that does not exist.
+        source:
+          type: object
+          required: [kind, ref, seq]
+          properties:
+            kind: { type: string, enum: [tag, branch] }
+            ref: { type: string }
+            seq: { type: integer, format: int64 }
+
+    CreateTierRequest:
+      type: object
+      required: [id, resolves, ord]
+      properties:
+        id: { type: string, maxLength: 64 }
+        resolves:
+          type: string
+          enum: [live, snapshot]
+          description: |
+            `live` environments point at branch tips; `snapshot` environments
+            point at tags. **Immutable after creation** (M6-2).
+        ord:
+          type: integer
+          minimum: 0
+          description: Display order. Advisory — it does not gate promotion (M6-3).
+
+    TierDto:
+      type: object
+      required: [id, resolves, ord, promotePermission, environments]
+      properties:
+        id: { type: string }
+        resolves: { type: string, enum: [live, snapshot] }
+        ord: { type: integer }
+        promotePermission:
+          type: string
+          description: The grant guarding promotion to anything in this tier.
+        environments:
+          type: array
+          items: { type: string }
+
+    TierListResponse:
+      type: object
+      required: [tiers]
+      properties:
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/TierDto' }
+
+    CreateEnvironmentRequest:
+      type: object
+      required: [name, tier]
+      properties:
+        name: { type: string }
+        tier:
+          type: string
+          description: Fixed at creation and immutable afterwards (M6-2).
+        target:
+          type: string
+          description: Optional — an environment may be created pointing at nothing yet.
+
+    PromoteEnvironmentRequest:
+      type: object
+      properties:
+        target:
+          type: string
+          nullable: true
+          description: |
+            Where the environment should point. Null unsets it — a reachable
+            state, since qa/stage/prod all start unset at bootstrap.
+        expectedTarget:
+          type: string
+          description: |
+            Optional precondition (M4-16): repoint only if the environment
+            currently points here, else `ENVIRONMENT_MOVED`. The real hazard is
+            two people promoting different tags to one environment, and it
+            matters most on rollback — if someone already fixed it forward, the
+            rollback must fail rather than undo their work.
+        reason:
+          type: string
+          description: Recorded in `ref_history.reason`.
+
+    EnvironmentResponse:
+      type: object
+      required: [name, tier]
+      properties:
+        name: { type: string }
+        tier: { type: string }
+        target: { type: string, nullable: true }
+        previousTarget:
+          type: string
+          nullable: true
+          description: Where it pointed before this call. Absent on creation.
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/Warning' }
+
+    EnvironmentListResponse:
+      type: object
+      required: [environments]
+      properties:
+        environments:
+          type: array
+          items: { $ref: '#/components/schemas/EnvironmentDto' }
+
+    EnvironmentDto:
+      type: object
+      required: [name, tier, resolves]
+      properties:
+        name: { type: string }
+        tier: { type: string }
+        resolves: { type: string, enum: [live, snapshot] }
+        target: { type: string, nullable: true }
+
+    RefHistoryResponse:
+      type: object
+      required: [ref, history]
+      properties:
+        ref: { type: string }
+        hasMore: { type: boolean }
+        history:
+          type: array
+          items:
+            type: object
+            required: [ref, actor, at]
+            properties:
+              ref: { type: string }
+              from: { type: string, nullable: true }
+              to:
+                type: string
+                nullable: true
+                description: Null means the environment was unset or removed (M6-2).
+              reason: { type: string, nullable: true }
+              actor: { type: string }
+              at: { type: string, format: date-time }
+
+    GrantRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          description: One of the seeded roles — viewer, author, maintainer, release_manager, owner.
+
+    ProjectRole:
+      type: object
+      required: [actorId, role, grantedBy, grantedAt]
+      properties:
+        actorId: { type: string, format: uuid }
+        role: { type: string }
+        grantedBy:
+          type: string
+          format: uuid
+          description: The actor who made the grant.
+        grantedAt: { type: string, format: date-time }
+
+    ProjectRoleListResponse:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectRole' }
+
+    IssueDeliveryKeyRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          description: What this key is for, so a listing can be read months later.
+        refs:
+          type: array
+          items: { type: string }
+          description: |
+            The refs this key may read. Omit for the whole project; an empty
+            array is refused rather than silently meaning "everything".
+        expiresInDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+
+    IssuedDeliveryKeyResponse:
+      type: object
+      required: [key, delivery]
+      properties:
+        key:
+          type: string
+          description: ⚠️ Returned once. Only its hash is stored.
+        delivery: { $ref: '#/components/schemas/DeliveryKey' }
+
+    DeliveryKey:
+      type: object
+      required: [id, createdAt]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        refs:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    DeliveryKeyListResponse:
+      type: object
+      required: [keys, publicRefs]
+      properties:
+        keys:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryKey' }
+        publicRefs:
+          type: array
+          items: { type: string }
+
+    PublicRefsRequest:
+      type: object
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          items: { type: string }
+          description: Environment names only. Replaces the current set.
+
+    CreateTagRequest:
+      type: object
+      required: [name, ref]
+      properties:
+        description:
+          type: string
+          maxLength: 2000
+          description: Release notes.
+        name:
+          type: string
+          description: |
+            Non-blank and at most 255 characters, unique in the ref namespace —
+            and nothing else (M4-3f). `v1.0.1`, `2026.08.1` and `release-42` are
+            equally valid here; a version *convention* is chosen and enforced by
+            the layer above, per repository, because a shape changes nothing
+            about resolution.
+        ref:
+          type: string
+          description: The **version** branch to tag. Feature branches cannot be tagged (D21).
+        at:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Tag at an explicit **sequence**, defaulting to the project's
+            high-water mark. The same contract as `CreateBranchRequest.at` and
+            for a stronger reason (M4-3d): a branch cut at an approximate point
+            is an annoyance, but a tag cut at one is a release artifact nobody
+            can reproduce. Timestamps are rejected.
+
+            Bounded at **both** ends (M4-3e), refused with `INVALID_TAG_POINT`:
+            above the project's high-water mark the tag would keep accruing
+            content and would not be immutable; below the tagged branch's own
+            creation seq it would resolve to the parent's state, containing
+            nothing that branch ever wrote.
+
+    TagResponse:
+      type: object
+      required: [name, ref, at]
+      properties:
+        name: { type: string }
+        ref:
+          type: string
+          description: The version branch the tag was cut from.
+        at:
+          type: integer
+          format: int64
+          description: The frozen coordinate. A tag *is* `(ref, at)`.
+        warnings:
+          type: array
+          description: |
+            Non-blocking (M6-10). Carries the forward-port check, which runs at
+            tag creation because that is the moment the omission becomes
+            expensive — and exactly when someone is paying attention.
+          items: { $ref: '#/components/schemas/Warning' }
+
+    BranchResponse:
+      type: object
+      required: [name, kind, from, branchedAt, depth]
+      properties:
+        name: { type: string }
+        kind: { type: string }
+        from: { type: string }
+        branchedAt: { type: integer, format: int64 }
+        depth: { type: integer }
+        depthWarning: { type: boolean }
+
+    BranchListResponse:
+      type: object
+      required: [branches]
+      properties:
+        branches:
+          type: array
+          items:
+            type: object
+            required: [name, kind, status, depth]
+            properties:
+              name: { type: string }
+              kind: { type: string }
+              status: { type: string, enum: [open, merged, archived] }
+              parent: { type: string }
+              depth: { type: integer }
+              pendingForwardPort:
+                type: integer
+                nullable: true
+                description: |
+                  M6-10, ambient half: how many nodes this version branch holds
+                  that its successor does not. Never blocks — a permanent alert
+                  trains people to dismiss it, which is why the loud version
+                  lives on tag creation instead.
+
+    TypeResponse:
+      type: object
+      required: [slug, version, definition]
+      properties:
+        slug: { type: string }
+        version: { type: string, format: uuid }
+        definition: { type: object }
+
+    TypeListResponse:
+      type: object
+      required: [types]
+      properties:
+        types:
+          type: array
+          items: { $ref: '#/components/schemas/TypeResponse' }
+
+    PutTypeRequest:
+      type: object
+      required: [definition]
+      properties:
+        definition:
+          type: object
+          description: '`{_name, fields[]}`. Field ids must start with a letter — `_` is reserved.'
+        confirmDestructive:
+          type: boolean
+          description: Phase two of R1.3. Without it, a destructive change is refused.
+
+    CreateEntryRequest:
+      type: object
+      required: [type, slug, fields]
+      properties:
+        type: { type: string, description: Content type slug. }
+        slug: { type: string, description: Stamped into the document as `_slug` by the writer. }
+        fields: { type: object }
+
+    PutEntryRequest:
+      type: object
+      required: [fields]
+      properties:
+        fields: { type: object }
+
+    EntryResponse:
+      type: object
+      required: [id, type, slug, version, fields]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        slug: { type: string }
+        version: { type: string, format: uuid }
+        fields: { type: object }
+
+    PageDto:
+      type: object
+      required: [limit, offset, hasMore]
+      properties:
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore:
+          type: boolean
+          description: Whether another page exists. Costs one extra row, not a full count.
+
+    EntryListResponse:
+      type: object
+      required: [entries, total, page]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/EntryResponse' }
+        total:
+          type: integer
+          description: How many came back in **this page**, not in the collection.
+        page: { $ref: '#/components/schemas/PageDto' }
+
+    ReferencesResponse:
+      type: object
+      required: [id, ref, incoming, total]
+      properties:
+        id: { type: string, format: uuid }
+        ref: { type: string }
+        incoming:
+          type: array
+          items: { $ref: '#/components/schemas/IncomingReferenceDto' }
+        total:
+          type: integer
+          description: |
+            All of them — this response is not paginated. A caller asking "can I
+            safely delete this" needs the whole answer or none; a first page of
+            twelve would not answer the question.
+
+    IncomingReferenceDto:
+      type: object
+      required: [nodeId, kind, field]
+      properties:
+        nodeId: { type: string, format: uuid }
+        kind: { type: string, enum: [content_type, component_type, entry] }
+        slug: { type: string }
+        field:
+          type: string
+          description: Which field on the linking node carries the link.
+
+    HistoryResponse:
+      type: object
+      required: [id, ref, versions, page]
+      properties:
+        id: { type: string, format: uuid }
+        ref: { type: string }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/HistoryEntryDto' }
+        page: { $ref: '#/components/schemas/PageDto' }
+
+    HistoryEntryDto:
+      type: object
+      required: [version, seq, op, actor, at, branch]
+      properties:
+        version: { type: string, format: uuid }
+        parent:
+          type: [string, 'null']
+          description: The version this one superseded. Absent on the first.
+        seq:
+          type: integer
+          format: int64
+          description: Commit order, not wall-clock — allocated under a lock (D20).
+        op: { type: string, enum: [upsert, tombstone] }
+        actor: { type: string, format: uuid }
+        at: { type: string, format: date-time }
+        branch:
+          type: string
+          description: Where the edit was made. Provenance the version row cannot carry.
+
+    DiffResponse:
+      type: object
+      required: [from, to, mode, summary, nodes]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        mode: { type: string, enum: [diverged, absolute] }
+        base:
+          type: object
+          properties:
+            ref: { type: string }
+            seq: { type: integer, format: int64 }
+        summary:
+          type: object
+          required: [added, modified, deleted]
+          properties:
+            added: { type: integer }
+            modified: { type: integer }
+            deleted: { type: integer }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/NodeDiffDto' }
+        conflicts:
+          type: array
+          description: Merge preview. Present only in `diverged` mode.
+          items: { $ref: '#/components/schemas/MergeConflictDto' }
+        mergeToken:
+          type: string
+          description: |
+            Opaque. Round-trip it as `expectedToken`; never parse or construct
+            one. Present only in `diverged` mode.
+
+    NodeDiffDto:
+      type: object
+      required: [nodeId, kind, change]
+      properties:
+        nodeId: { type: string, format: uuid }
+        kind: { type: string, enum: [content_type, component_type, entry] }
+        slug: { type: string }
+        change: { type: string, enum: [added, modified, deleted] }
+        fields:
+          type: array
+          items:
+            type: object
+            required: [path, change]
+            properties:
+              path:
+                type: string
+                description: 'Key-based at every level: `title.en-US`, `sections[<uuid>].headline`.'
+              change: { type: string, enum: [added, removed, modified] }
+              before: {}
+              after: {}
+        schemaChanges:
+          type: array
+          description: The semantic overlay. Content types only.
+          items:
+            type: object
+            properties:
+              fieldId: { type: string }
+              kind: { type: string }
+              destructive: { type: boolean }
+              describe: { type: string }
+
+    MergeConflictDto:
+      type: object
+      required: [nodeId, reason]
+      properties:
+        nodeId: { type: string, format: uuid }
+        slug: { type: string }
+        reason:
+          type: string
+          enum:
+            - field
+            - deleted_and_modified
+            - slug_collision
+            - internal_name_collision
+            - unmatched
+            - not_applicable
+        paths:
+          type: array
+          description: Key-based paths. Empty for whole-node reasons.
+          items: { type: string }
+
+    MergeResolutionDto:
+      type: object
+      required: [nodeId, take]
+      properties:
+        nodeId: { type: string, format: uuid }
+        path:
+          type: string
+          description: The exact reported path. Omit to settle the whole node.
+        take:
+          type: string
+          enum: [source, target, value]
+          description: |
+            Naming a side rather than repeating its content is what makes a
+            resolution unable to be stale in its *value*, and it is the only form
+            that can express **absence** — taking the side that deleted a key.
+        value:
+          description: Required for `take: value`, and only valid with a `path`.
+
+    MergeRequest:
+      type: object
+      required: [source, target]
+      properties:
+        message:
+          type: string
+          maxLength: 2000
+          description: |
+            What this merge does. Write-once — a merge is a finished event, so there
+            is deliberately no path to edit one.
+        source: { type: string }
+        target: { type: string }
+        resolutions:
+          type: array
+          items: { $ref: '#/components/schemas/MergeResolutionDto' }
+        expectedToken:
+          type: string
+          description: |
+            The `mergeToken` from the diff this was reviewed against. Optional:
+            omitting it risks no data loss — the merge still computes a correct
+            three-way — only the promise that a human looked at this result.
+
+    MergeResponse:
+      type: object
+      required: [source, target, merged, unchanged]
+      properties:
+        source: { type: string }
+        target: { type: string }
+        base:
+          type: object
+          properties:
+            ref: { type: string }
+            seq: { type: integer, format: int64 }
+        merged: { type: integer, description: Nodes written to the target. }
+        unchanged: { type: integer }
+        resolved: { type: integer, description: Conflicts a human settled. }

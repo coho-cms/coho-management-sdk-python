@@ -1,0 +1,516 @@
+openapi: 3.1.0
+
+# Hand-written, per implementation plan §5.5, like authoring.yaml. `OpenApiSpecTest`
+# in this module fails the build when the paths here and `BffRoutes` drift.
+#
+# ⚠️ This spec describes what the BFF *adds*: the login flow, the session, the
+# account segment, and which of the two private tiers each path reaches. It does
+# not restate the authoring surface. For everything under
+# `/api/v1/accounts/{account}/projects/...`, the request and response shapes are
+# authoring.yaml's, byte for byte — the BFF forwards the body, the query string
+# and the conditional-request headers untouched, and rewrites only `Location`.
+# For the account-management paths, the shapes are `:api-auth`'s, minus every
+# `externalId`.
+
+info:
+  title: Coho BFF
+  version: "0.1.0"
+  description: |
+    The public face of the authoring side (doc 22). Browsers hold a session
+    cookie; CLIs and SDKs present a Cognito access token as `Authorization:
+    Bearer`. Either way the BFF forwards the **user's** credential to `:api-auth`
+    and the user's **actor for the account in the path** to `:api-authoring`.
+    It holds no credential of its own beyond the OIDC client secret.
+
+    **Branch on `code`, not on status.** Refusals from the tiers behind the BFF
+    are relayed unchanged; the BFF's own codes are listed under `Problem`.
+
+    **Cookie sessions need a CSRF token on writes.** Read `csrfToken` from
+    `GET /api/v1/me` and send it as `X-Coho-Csrf` on every `POST`, `PUT`,
+    `PATCH` and `DELETE`. Bearer callers do not.
+
+servers:
+  - url: http://localhost:8090
+    description: Local development
+
+security:
+  - sessionCookie: []
+  - bearer: []
+
+tags:
+  - name: Login
+    description: The OIDC dance. No credential is needed; these produce one.
+  - name: Session
+  - name: Account management
+    description: Relayed to `:api-auth` with the caller's bearer, at the same path minus `/api`.
+  - name: Content
+    description: Relayed to `:api-authoring` as the caller's actor for `{account}`.
+
+paths:
+
+  /auth/login:
+    get:
+      tags: [Login]
+      summary: Redirect the browser to the identity provider
+      operationId: loginRedirect
+      security: []
+      parameters:
+        - name: returnTo
+          in: query
+          description: A path on this BFF to land on afterwards. Anything that is not a local path becomes `/`.
+          schema: { type: string }
+      responses:
+        '302': { description: To the hosted sign-in UI }
+    post:
+      tags: [Login]
+      summary: Start a sign-in, returning where to send the browser
+      operationId: loginStart
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartLoginRequest' }
+      responses:
+        '200':
+          description: The provider URL to navigate to
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RedirectResponse' }
+
+  /auth/signup:
+    post:
+      tags: [Login]
+      summary: Start a sign-up that founds a new account
+      description: The callback ends in `POST /v1/signups` with the ID token and this account name.
+      operationId: signupStart
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartSignupRequest' }
+      responses:
+        '200':
+          description: The provider URL to navigate to
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RedirectResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /auth/invitations/lookup:
+    post:
+      tags: [Login]
+      summary: What an invitation offers, before signing in
+      description: |
+        Relayed to `POST /v1/invitations/lookup`. The token arrives in the body
+        (LG-16): the link a person clicks carries it in a URL fragment, which
+        the browser never sends, and the page posts it here.
+      operationId: invitationLookup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invitation]
+              properties:
+                invitation: { type: string }
+      responses:
+        '200': { description: The invitation, as `:api-auth` describes it }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /auth/invitations/accept:
+    post:
+      tags: [Login]
+      summary: Start a sign-in that accepts an invitation
+      description: |
+        The invitation token is held server-side until the callback, then posted
+        to `POST /v1/invitations/accept` with the ID token. It never appears in a URL.
+      operationId: invitationAcceptStart
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptInvitationRequest' }
+      responses:
+        '200':
+          description: The provider URL to navigate to
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RedirectResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /auth/callback:
+    get:
+      tags: [Login]
+      summary: Where the identity provider sends the browser back
+      description: |
+        Consumes the `state` (single use), exchanges the code with the stored
+        PKCE verifier, hands the ID token to the `:api-auth` endpoint the intent
+        named, and opens a session. On any refusal the browser lands on the
+        login page with `?error=<code>` — `UNAUTHENTICATED` means a real
+        identity with no login here (LG-5): sign up, or ask for an invitation.
+      operationId: callback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: To `returnTo`, with the session cookie set — or to the login page with an error code
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: "`coho_session`; HttpOnly, SameSite=Lax, Secure outside localhost"
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /auth/logout:
+    post:
+      tags: [Login]
+      summary: End the session here and at the provider
+      operationId: logout
+      responses:
+        '302': { description: To the provider's logout endpoint, with the cookie cleared }
+        '200':
+          description: With `Accept: application/json`, the provider's logout URL instead of a redirect
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RedirectResponse' }
+
+  /api/v1/me:
+    get:
+      tags: [Session]
+      summary: Who is signed in, and which accounts they belong to
+      description: |
+        `:api-auth`'s `GET /v1/me`, with every `externalId` removed and, for a
+        cookie session, `csrfToken` added. Membership is read fresh on every
+        call, so a removal or a role change shows here on the next request.
+      operationId: me
+      responses:
+        '200':
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/plans:
+    get:
+      tags: [Account management]
+      summary: The plan catalogue
+      operationId: listPlans
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/plans`" }
+
+  /api/v1/users/{userId}:
+    patch:
+      tags: [Account management]
+      summary: Rename yourself
+      operationId: updateUser
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "`:api-auth` `PATCH /v1/users/{userId}`" }
+
+  /api/v1/users/{userId}/logins:
+    get:
+      tags: [Account management]
+      summary: Which identities are attached to you
+      operationId: listLogins
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/users/{userId}/logins`" }
+
+  /api/v1/users/{userId}/logins/{loginId}:
+    delete:
+      tags: [Account management]
+      summary: Detach an identity
+      operationId: detachLogin
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string } }
+        - { name: loginId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Detached }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/accounts/{account}:
+    patch:
+      tags: [Account management]
+      summary: Rename an account, as its admin
+      operationId: updateAccount
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `PATCH /v1/accounts/{id}`" }
+
+  /api/v1/accounts/{account}/users:
+    get:
+      tags: [Account management]
+      summary: The account's members
+      operationId: listMembers
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/users`" }
+
+  /api/v1/accounts/{account}/events:
+    get:
+      tags: [Account management]
+      summary: The account's audit trail
+      operationId: listEvents
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/events`" }
+
+  /api/v1/accounts/{account}/entitlements:
+    get:
+      tags: [Account management]
+      summary: What the account's plan allows
+      description: |
+        The numbers a client soft-gates on (doc 16 §3, doc 22 §5). Hard limits
+        are enforced at the write path in both tiers regardless, and a refused
+        write answers `PLAN_LIMIT`.
+      operationId: getEntitlements
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/entitlements`" }
+
+  /api/v1/accounts/{account}/invitations:
+    get:
+      tags: [Account management]
+      summary: Outstanding invitations
+      operationId: listInvitations
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/invitations`" }
+    post:
+      tags: [Account management]
+      summary: Invite somebody by email
+      description: |
+        ⚠️ The response carries the invitation token **once** (LG-22). Whoever
+        calls this owns delivering it to the invitee over a channel that does
+        not leak it; the link should carry it in a URL fragment.
+      operationId: invite
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '201':
+          description: "`:api-auth` `POST /v1/accounts/{id}/invitations`"
+          headers:
+            Location:
+              schema: { type: string }
+              description: Rewritten into `/api/v1/...`
+
+  /api/v1/accounts/{account}/invitations/{invitationId}:
+    delete:
+      tags: [Account management]
+      summary: Revoke an invitation
+      operationId: revokeInvitation
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - { name: invitationId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Revoked }
+
+  /api/v1/accounts/{account}/members/{userId}:
+    patch:
+      tags: [Account management]
+      summary: Change a member's role
+      operationId: changeRole
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "`:api-auth` `PATCH /v1/accounts/{id}/members/{userId}`" }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Account management]
+      summary: Remove a member, or leave
+      operationId: removeMember
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Removed }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/accounts/{account}/projects/{path}:
+    description: |
+      The whole authoring surface, one account deep. `{path}` is everything
+      after `/v1/projects` in authoring.yaml — empty for the collection itself
+      — and the body, query string, `If-Match`/`If-None-Match`, `ETag` and
+      status cross untouched. Two things the BFF adds: the `X-Coho-Actor` for
+      the caller in `{account}` (minted on first use), and on `POST` of the
+      collection, `organizationId` set from the path — a body naming another
+      account is `400 ACCOUNT_MISMATCH`. An account the caller is not in is
+      `404`, before authoring is asked.
+    parameters:
+      - { $ref: '#/components/parameters/account' }
+      - { name: path, in: path, required: true, schema: { type: string }, description: The authoring path after `/v1/projects` }
+    get:
+      tags: [Content]
+      summary: Read, as the actor for the account
+      operationId: contentGet
+      responses:
+        '200': { description: authoring.yaml's response }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Content]
+      summary: Create, as the actor for the account
+      operationId: contentPost
+      responses:
+        '201':
+          description: authoring.yaml's response
+          headers:
+            Location:
+              schema: { type: string }
+              description: Rewritten from `/v1/projects/...` to `/api/v1/accounts/{account}/projects/...`
+        '400': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Content]
+      summary: Replace, as the actor for the account
+      operationId: contentPut
+      responses:
+        '200': { description: authoring.yaml's response }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [Content]
+      summary: Amend, as the actor for the account
+      operationId: contentPatch
+      responses:
+        '200': { description: authoring.yaml's response }
+    delete:
+      tags: [Content]
+      summary: Delete, as the actor for the account
+      operationId: contentDelete
+      responses:
+        '204': { description: authoring.yaml's response }
+
+  /api/v1/accounts/{account}/projects/{project}/preview/{ref}/{path}:
+    get:
+      tags: [Content]
+      summary: Preview a live ref through the delivery contract
+      description: |
+        Authoring's `/v1/live/{project}/{ref}/...` — the live implementation of
+        delivery.yaml, which doc 10 §6.3 says must be BFF-fronted. `{path}` is
+        `entries` or `entries/{id}`, with delivery.yaml's query parameters.
+        `Cache-Control: no-cache` is relayed as authoring sends it.
+      operationId: preview
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - { name: project, in: path, required: true, schema: { type: string } }
+        - { name: ref, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: delivery.yaml's response }
+        '404': { $ref: '#/components/responses/Problem' }
+
+components:
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: coho_session
+      description: Opaque session id. Writes also need `X-Coho-Csrf`.
+    bearer:
+      type: http
+      scheme: bearer
+      description: A Cognito access token issued to an app client `:api-auth` accepts.
+
+  parameters:
+    account:
+      name: account
+      in: path
+      required: true
+      schema: { type: string }
+      description: The account the request is about. Decides which actor is sent (AU-19).
+
+  responses:
+    Problem:
+      description: RFC 9457
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    StartLoginRequest:
+      type: object
+      properties:
+        returnTo: { type: string, description: A path on this BFF }
+
+    StartSignupRequest:
+      type: object
+      required: [accountName]
+      properties:
+        accountName: { type: string }
+        displayName: { type: string }
+        returnTo: { type: string }
+
+    AcceptInvitationRequest:
+      type: object
+      required: [invitation]
+      properties:
+        invitation: { type: string, description: The token from the invitation link's fragment }
+        displayName: { type: string }
+        returnTo: { type: string }
+
+    RedirectResponse:
+      type: object
+      required: [location]
+      properties:
+        location: { type: string, description: Navigate the top-level window here }
+
+    MeResponse:
+      type: object
+      description: "`:api-auth`'s `SessionDto` without `externalId`, plus `csrfToken` for cookie sessions"
+      properties:
+        user:
+          type: object
+          properties:
+            id: { type: string }
+            displayName: { type: string }
+            email: { type: string }
+        accounts:
+          type: array
+          items:
+            type: object
+            properties:
+              accountId: { type: string }
+              accountName: { type: string }
+              role: { type: string, enum: [admin, member] }
+              actorId: { type: string, description: Present once the user has acted in the account. Not a credential. }
+        csrfToken: { type: string, description: Cookie sessions only. Send as `X-Coho-Csrf` on writes. }
+
+    Problem:
+      type: object
+      required: [code, type, title, status]
+      properties:
+        code:
+          type: string
+          description: |
+            The BFF's own: `UNAUTHENTICATED`, `CSRF_REJECTED`, `NOT_FOUND`,
+            `ROUTE_NOT_FOUND`, `BAD_REQUEST`, `MALFORMED_BODY`,
+            `LOGIN_STATE_INVALID`, `LOGIN_REFUSED`, `ACCOUNT_MISMATCH`,
+            `UPSTREAM_UNAVAILABLE`, `INTERNAL`. Anything else is relayed from
+            the tier that refused, and is that tier's catalog.
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
