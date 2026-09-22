@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from coho_sdk import errors as e
+from coho_management_sdk import errors as e
 
 
 def _resp(status: int, body: str, content_type: str) -> httpx.Response:

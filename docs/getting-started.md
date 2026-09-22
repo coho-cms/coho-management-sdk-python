@@ -1,8 +1,8 @@
 # Getting started
 
 ```bash
-pip install coho-sdk              # httpx, tomli-w
-pip install 'coho-sdk[keyring]'   # to read tokens the CLI stored in the OS keyring
+pip install coho-management-sdk              # httpx, tomli-w
+pip install 'coho-management-sdk[keyring]'   # to read tokens the CLI stored in the OS keyring
 ```
 
 Python ≥ 3.11. Synchronous, built on `httpx`.
@@ -12,7 +12,7 @@ Python ≥ 3.11. Synchronous, built on `httpx`.
 ### From a profile the CLI configured
 
 ```python
-from coho_sdk import Coho
+from coho_management_sdk import Coho
 
 coho = Coho.from_profile("staging")   # name, or $COHO_PROFILE, or the current profile
 ```
@@ -47,15 +47,15 @@ Called before every request.
 | `profile` | a `Profile`, for its token store and refresh settings |
 | `timeout` | seconds per request, default 30; `None` for none |
 | `http` | an `httpx.Client` to use (tests, proxies, custom TLS) |
-| `transport` | a prebuilt `coho_sdk.transport.Transport` |
+| `transport` | a prebuilt `coho_management_sdk.transport.Transport` |
 
 `Coho` is a context manager; `close()` closes the HTTP client.
 
 ## Logging in programmatically
 
 ```python
-from coho_sdk import Config, login
-from coho_sdk.auth import token_store_for
+from coho_management_sdk import Config, login
+from coho_management_sdk.auth import token_store_for
 
 config = Config.load()
 profile = config.profile("staging")
@@ -63,14 +63,14 @@ tokens = login(profile, timeout=300)          # opens the browser, runs PKCE
 token_store_for(profile).save(profile.name, tokens)
 ```
 
-`login(profile, open_browser=…, on_url=…, port=…, http=…)` — see `coho_sdk.auth`.
+`login(profile, open_browser=…, on_url=…, port=…, http=…)` — see `coho_management_sdk.auth`.
 It needs `profile.oidc_domain` and `profile.client_id`; see
 [authentication](https://github.com/coho-cms/coho-cli/blob/main/docs/authentication.md) for the app client this requires.
 
 ## Profiles and context from Python
 
 ```python
-from coho_sdk import Config
+from coho_management_sdk import Config
 
 config = Config.load()                     # or Config.load(path)
 p = config.profile("staging", create=True)

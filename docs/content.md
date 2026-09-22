@@ -61,7 +61,7 @@ dev.entries.put(entry_id, fields)                    # PreconditionRequired, rai
 Handle a race:
 
 ```python
-from coho_sdk import VersionConflict
+from coho_management_sdk import VersionConflict
 
 for _ in range(3):
     post = dev.entries.get(entry_id)
@@ -97,7 +97,7 @@ r.total, [(i.node_id, i.field) for i in r.incoming]
 ## Validation errors
 
 ```python
-from coho_sdk import ValidationFailed
+from coho_management_sdk import ValidationFailed
 
 try:
     dev.entries.create(type="blogPost", slug="x", fields={})

@@ -35,7 +35,7 @@ site.diff("v0.0.x", "feature/pricing", mode="absolute")   # two-dot
 ```
 
 ```python
-from coho_sdk import MergeConflict, Resolution
+from coho_management_sdk import MergeConflict, Resolution
 
 try:
     result = site.merge("feature/pricing", "v0.0.x", message="New pricing", expected_token=d.merge_token)

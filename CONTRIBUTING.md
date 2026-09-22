@@ -14,7 +14,7 @@ Or `make check` for all of it. Everything CI runs, you can run locally.
 ## Layout
 
 ```
-src/coho_sdk/
+src/coho_management_sdk/
   errors.py        CohoError and the branchable subclasses; error_for_response()
   transport.py     httpx, the bearer header, problem+json → CohoError, ETag capture
   auth.py          PKCE login, token stores (keyring/file), refresh, TokenProvider
@@ -56,7 +56,7 @@ match. Bumping the pin is the release trigger.
 
 ## Versioning and releasing
 
-The version lives in `src/coho_sdk/_version.py` alone; `pyproject.toml` reads it
+The version lives in `src/coho_management_sdk/_version.py` alone; `pyproject.toml` reads it
 (`[tool.hatch.version]`), and a test asserts the installed metadata agrees.
 
 1. Bump `__version__` and add a `CHANGELOG.md` entry.
@@ -73,7 +73,7 @@ artifact, so a build is downloadable without a release.
 The workflow has a `publish-pypi` job that is skipped unless you ask for it. To enable:
 
 1. Register this repository as a [trusted publisher](https://docs.pypi.org/trusted-publishers/)
-   on PyPI for the `coho-sdk` project, with workflow `ci.yml` and environment `pypi`.
+   on PyPI for the `coho-management-sdk` project, with workflow `ci.yml` and environment `pypi`.
 2. Create a GitHub environment named `pypi` (protect it with required reviewers).
 3. Set the repository variable `PUBLISH_TO_PYPI` to `true`.
 

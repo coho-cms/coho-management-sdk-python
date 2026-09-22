@@ -1,6 +1,6 @@
 # Vendored contracts
 
-Copied from `coho-data` at the commit in `PIN`. These are what `coho_sdk` implements:
+Copied from `coho-data` at the commit in `PIN`. These are what `coho_management_sdk` implements:
 
 | File | Implemented by | Notes |
 |---|---|---|

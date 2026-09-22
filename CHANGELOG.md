@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `coho-sdk`. The format follows
+All notable changes to `coho-management-sdk`. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/).
 
@@ -10,6 +10,10 @@ All notable changes to `coho-sdk`. The format follows
 
 Extracted from `coho-cli`, where it began life as a workspace package, into its own
 repository and distribution.
+
+Published as **`coho-management-sdk`**, importable as `coho_management_sdk`. The name
+says which half of Coho it speaks to: a separate `coho-delivery-sdk` will carry the
+read-only client that a customer's website installs with a project key.
 
 ### Added
 
@@ -23,7 +27,7 @@ repository and distribution.
 - Browser PKCE login with keyring and file token stores, silent refresh, and a
   `COHO_ACCESS_TOKEN` override.
 - Profiles and sticky context in `~/.config/coho/config.toml`.
-- `coho_sdk.testing.FakeBff`, a contract-shaped fake server, published under the
+- `coho_management_sdk.testing.FakeBff`, a contract-shaped fake server, published under the
   `testing` extra so downstream projects can test against it.
 
 ### Fixed
@@ -32,5 +36,5 @@ repository and distribution.
   Owner-only permissions are applied where the platform has them and skipped where it
   does not.
 
-[Unreleased]: https://github.com/coho-cms/coho-sdk-python/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/coho-cms/coho-sdk-python/releases/tag/v0.1.0
+[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/v0.1.0

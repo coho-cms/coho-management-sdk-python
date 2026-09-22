@@ -165,7 +165,7 @@ wheels = [
 ]
 
 [[package]]
-name = "coho-sdk"
+name = "coho-management-sdk"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

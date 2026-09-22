@@ -1,9 +1,9 @@
 """A fake BFF on a real port, shaped like the contracts — for tests, yours included.
 
-Install ``coho-sdk[testing]`` (pytest-httpserver) and use `FakeBff` with the
+Install ``coho-management-sdk[testing]`` (pytest-httpserver) and use `FakeBff` with the
 ``httpserver`` fixture::
 
-    from coho_sdk.testing import FakeBff, ACCOUNT, PROJECT
+    from coho_management_sdk.testing import FakeBff, ACCOUNT, PROJECT
 
     def test_something(httpserver):
         bff = FakeBff(httpserver)

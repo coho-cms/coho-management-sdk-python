@@ -1,15 +1,15 @@
 # Testing against a fake BFF
 
-`coho_sdk.testing.FakeBff` is the contract-shaped fake the SDK's own tests use. It
+`coho_management_sdk.testing.FakeBff` is the contract-shaped fake the SDK's own tests use. It
 runs on a real port via `pytest-httpserver`, so your code goes through real HTTP.
 
 ```bash
-pip install 'coho-sdk[testing]'
+pip install 'coho-management-sdk[testing]'
 ```
 
 ```python
-from coho_sdk import Coho
-from coho_sdk.testing import ACCOUNT, ENTRY, PROJECT, FakeBff
+from coho_management_sdk import Coho
+from coho_management_sdk.testing import ACCOUNT, ENTRY, PROJECT, FakeBff
 
 def test_my_script(httpserver):
     bff = FakeBff(httpserver)
