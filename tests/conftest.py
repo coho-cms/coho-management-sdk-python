@@ -1,13 +1,13 @@
-"""Fixtures: the fake BFF from ``coho_sdk.testing`` and a client pointed at it."""
+"""Fixtures: the fake BFF from ``coho_management_sdk.testing`` and a client pointed at it."""
 
 from __future__ import annotations
 
 import pytest
 from pytest_httpserver import HTTPServer
 
-from coho_sdk import Coho
-from coho_sdk.profiles import Profile
-from coho_sdk.testing import FakeBff
+from coho_management_sdk import Coho
+from coho_management_sdk.profiles import Profile
+from coho_management_sdk.testing import FakeBff
 
 
 @pytest.fixture

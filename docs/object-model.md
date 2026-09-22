@@ -72,11 +72,11 @@ response as received. The important ones:
 | `DeliveryKey`, `IssuedDeliveryKey`, `DeliveryKeyList` | issued: `.key` (once); list: `keys`, `public_refs` |
 | `Export` | `path`, `seq`, `bytes_written`, `redirected_to`, `manifest` |
 
-Constants: `coho_sdk.models.PROJECT_ROLES`, `ACCOUNT_ROLES`.
+Constants: `coho_management_sdk.models.PROJECT_ROLES`, `ACCOUNT_ROLES`.
 
 ## Transport
 
-`coho_sdk.transport.Transport` is the one place that knows about `httpx`, the bearer
+`coho_management_sdk.transport.Transport` is the one place that knows about `httpx`, the bearer
 header, problem documents and ETags. `request(method, path, json_body=, params=,
 headers=, if_match=, follow_redirects=, stream=)` returns a `Response(status, body,
 etag, headers, raw)` or raises. `params` entries that are `None` are dropped. You

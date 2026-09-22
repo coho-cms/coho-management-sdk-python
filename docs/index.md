@@ -1,4 +1,4 @@
-# `coho_sdk` — library reference
+# `coho_management_sdk` — library reference
 
 The Python management SDK for Coho. It is also the library under the
 [`coho` CLI](https://github.com/coho-cms/coho-cli): everything that command does is one
@@ -6,7 +6,7 @@ call away here, with the same names, so CI scripts and notebooks import it witho
 CLI.
 
 ```python
-from coho_sdk import Coho
+from coho_management_sdk import Coho
 
 coho = Coho.from_profile("staging")          # or Coho(url=..., token=...)
 site = coho.account("acme").project("0192…")
@@ -25,7 +25,7 @@ dev.entries.put(post)                        # sends If-Match from post.etag
 | [Content](content.md) | types, entries, ETags, pagination, history, references |
 | [Branches and releases](releases.md) | branches, diff, merge, tags, environments, promote, rollback, export, preview |
 | [Errors](errors.md) | `CohoError`, the subclasses, branching on `code` |
-| [Testing](testing.md) | `coho_sdk.testing.FakeBff` for your own tests |
+| [Testing](testing.md) | `coho_management_sdk.testing.FakeBff` for your own tests |
 
 Three rules:
 

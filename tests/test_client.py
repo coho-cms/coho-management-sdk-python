@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from coho_sdk import Coho, Resolution
-from coho_sdk import errors as e
-from coho_sdk.testing import ACCOUNT, ACTOR, ENTRY, PROJECT, FakeBff
+from coho_management_sdk import Coho, Resolution
+from coho_management_sdk import errors as e
+from coho_management_sdk.testing import ACCOUNT, ACTOR, ENTRY, PROJECT, FakeBff
 
 
 def test_me_and_account_by_name(coho: Coho, bff: FakeBff) -> None:
@@ -230,7 +230,7 @@ def test_preview_goes_through_the_bff(coho: Coho, bff: FakeBff) -> None:
 
 
 def test_non_problem_failure_is_transport_error(coho: Coho) -> None:
-    from coho_sdk.client import Account
+    from coho_management_sdk.client import Account
 
     with pytest.raises(e.TransportError) as info:
         Account(coho, "gateway").projects.create("x")

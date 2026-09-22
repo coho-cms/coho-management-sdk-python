@@ -1,6 +1,6 @@
 # Errors
 
-Every failure raises `coho_sdk.CohoError`:
+Every failure raises `coho_management_sdk.CohoError`:
 
 | Attribute | |
 |---|---|
@@ -11,7 +11,7 @@ Every failure raises `coho_sdk.CohoError`:
 | `problem` | the raw document |
 
 ```python
-from coho_sdk import CohoError, VersionConflict, PlanLimit
+from coho_management_sdk import CohoError, VersionConflict, PlanLimit
 
 try:
     dev.entries.put(post)

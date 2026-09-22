@@ -1,6 +1,6 @@
-"""coho_sdk — the management SDK for Coho.
+"""coho_management_sdk — the management SDK for Coho.
 
-    from coho_sdk import Coho
+    from coho_management_sdk import Coho
 
     coho = Coho.from_profile("staging")            # or Coho(url=..., token=...)
     site = coho.account("acme").project("0192…")

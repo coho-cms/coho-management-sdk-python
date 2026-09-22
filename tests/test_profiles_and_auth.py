@@ -8,9 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from coho_sdk import auth
-from coho_sdk.errors import AuthError, NotLoggedIn
-from coho_sdk.profiles import Config, Profile
+from coho_management_sdk import auth
+from coho_management_sdk.errors import AuthError, NotLoggedIn
+from coho_management_sdk.profiles import Config, Profile
 
 
 def test_config_round_trip(tmp_path: Path) -> None:

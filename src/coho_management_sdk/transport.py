@@ -70,7 +70,7 @@ class Transport:
         self.base_url = base_url.rstrip("/")
         self._token_provider = token_provider or (lambda: None)
         self._client = client or httpx.Client(timeout=timeout, follow_redirects=False)
-        self._user_agent = user_agent or f"coho-sdk/{__version__}"
+        self._user_agent = user_agent or f"coho-management-sdk/{__version__}"
 
     def close(self) -> None:
         self._client.close()
