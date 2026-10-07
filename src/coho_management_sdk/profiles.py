@@ -32,8 +32,10 @@ Location: ``$COHO_CONFIG_DIR`` if set, else ``$XDG_CONFIG_HOME/coho``, else
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,14 +61,18 @@ def restrict_to_owner(target: int | Path) -> None:
     Takes an open file descriptor — which closes the window where a freshly created
     file is still world-readable — or a path. A no-op where POSIX mode bits do not
     exist (Windows), where a file inherits the parent directory's ACL instead.
+
+    The platform check is ``sys.platform`` rather than catching AttributeError so
+    type checkers understand it too: on Windows ``os.fchmod`` does not exist, and
+    mypy's Windows run rejects the call unless it can see it is unreachable there.
     """
-    try:
+    if sys.platform == "win32":
+        return
+    with contextlib.suppress(OSError):
         if isinstance(target, int):
             os.fchmod(target, stat.S_IRUSR | stat.S_IWUSR)
         else:
             os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-    except (AttributeError, NotImplementedError, OSError):
-        pass
 
 
 def config_dir() -> Path:

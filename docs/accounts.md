@@ -48,10 +48,15 @@ acme.invitations.revoke(invitation_id) # InvitationUnusable if already accepted/
 
 coho.invitation_lookup(token)          # no login needed → Invitation
 coho.invitation_accept_start(token, display_name="Jane")   # → a URL to open; finishes in a browser
-coho.signup_start("Acme")              # likewise
+coho.signup_url("Acme")                # → the sign-up page to open; makes no request at all
 ```
 
 Coho does not send email. Deliver the link over a channel that does not leak.
+
+These three work with no stored login, and send none even when there is one: they
+are what a person does before they have one. Sign-up is only a URL, because it must
+stay an interactive browser session; before release that page is where a captcha
+is verified.
 
 ## Users (yourself)
 

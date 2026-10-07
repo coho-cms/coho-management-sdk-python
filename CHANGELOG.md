@@ -6,6 +6,31 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `Coho.signup_url()` replaces `signup_start()`. Sign-up is now a page to open in a
+  browser, `GET /auth/signup` on the BFF, and the SDK makes no request for it: it
+  must stay an interactive session, where a captcha will be verified before release.
+- `login()` sends `redirect_uri=http://localhost:<port>/callback` instead of
+  `127.0.0.1`, since Cognito allows plain http for `localhost` alone. The listener
+  answers on `127.0.0.1` and, where the machine has it, `::1`, since browsers
+  resolve `localhost` to either.
+
+### Added
+
+- `Transport.request(..., auth=False)` for calls that must not carry a login.
+- `coho_management_sdk.testing` fakes the invitation lookup and acceptance routes,
+  with `INVITATION_TOKEN` as the one token they recognize.
+
+### Fixed
+
+- Invitation lookup and acceptance failed with `NOT_LOGGED_IN` for anyone without a
+  stored login, who are exactly the people they exist for. Every request asked the
+  token provider first; these now send no credential at all.
+- The Windows type check failed on `os.fchmod`, which kept CI red and meant no
+  build artifact was ever produced. `restrict_to_owner` now uses a `sys.platform`
+  check that type checkers understand.
+
 ## [0.1.0] — unreleased
 
 Extracted from `coho-cli`, where it began life as a workspace package, into its own

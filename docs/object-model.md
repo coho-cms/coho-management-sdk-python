@@ -4,7 +4,7 @@
 Coho
 ├── me() → Me                      accounts() → [Membership]        plans()
 ├── users: UsersApi                rename, logins, detach_login
-├── signup_start(), invitation_lookup(), invitation_accept_start()
+├── signup_url(), invitation_lookup(), invitation_accept_start()     before a login; send none
 └── account(id_or_name) → Account
     ├── id, name, role, membership
     ├── rename(), entitlements(), events()

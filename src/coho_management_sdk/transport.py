@@ -94,13 +94,19 @@ class Transport:
         if_match: str | None = None,
         follow_redirects: bool = False,
         stream: bool = False,
+        auth: bool = True,
     ) -> Response:
         """Send one request and return a `Response`, or raise a `CohoError`.
 
         ``params`` entries whose value is ``None`` are dropped, so callers can pass
         optional query parameters without filtering.
+
+        ``auth=False`` sends no credential and never consults the token provider,
+        for the few calls a person makes before they have a login (looking up or
+        accepting an invitation). Without it, a caller with no stored login would be
+        refused locally with `NotLoggedIn` before the request was even built.
         """
-        request_headers = self._headers(headers)
+        request_headers = self._headers(headers, auth=auth)
         if if_match is not None:
             request_headers["If-Match"] = if_match
         clean_params = {k: _param(v) for k, v in (params or {}).items() if v is not None}
@@ -174,12 +180,12 @@ class Transport:
 
     # -- internals -------------------------------------------------------------
 
-    def _headers(self, extra: dict[str, str] | None) -> dict[str, str]:
+    def _headers(self, extra: dict[str, str] | None, *, auth: bool = True) -> dict[str, str]:
         headers = {
             "Accept": "application/json, application/problem+json",
             "User-Agent": self._user_agent,
         }
-        token = self._token_provider()
+        token = self._token_provider() if auth else None
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if extra:

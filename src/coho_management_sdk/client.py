@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import IO, Any
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -123,22 +124,46 @@ class Coho:
         return [m.Plan.from_dict(p) for p in (body or {}).get("plans", [])]
 
     # -- flows that finish in a browser -------------------------------------------
+    #
+    # What a person does before they have a login, so none of these sends one.
 
-    def signup_start(self, account_name: str, *, display_name: str | None = None) -> str:
-        """Start founding a new account. Returns the URL to open; the BFF finishes the flow."""
-        body = {"accountName": account_name, "displayName": display_name}
-        resp = self.transport.post("/auth/signup", {k: v for k, v in body.items() if v})
-        return str(resp.body["location"])
+    def signup_url(
+        self,
+        account_name: str,
+        *,
+        display_name: str | None = None,
+        return_to: str = "/api/v1/me",
+    ) -> str:
+        """The page that founds a new account, for a person to open in a browser.
+
+        Makes no request. Sign-up is a browser flow on purpose: it must stay an
+        interactive session, and before release that page is where a captcha is
+        verified. ``return_to`` is where the browser lands once the account exists;
+        the default shows the new user and account.
+        """
+        if not account_name.strip():
+            raise ValueError("account_name is required")
+        query = {"accountName": account_name.strip(), "returnTo": return_to}
+        if display_name and display_name.strip():
+            query["displayName"] = display_name.strip()
+        # %20 rather than `+` for spaces: unambiguous whatever decodes the query.
+        return f"{self.transport.base_url}/auth/signup?{urlencode(query, quote_via=quote)}"
 
     def invitation_lookup(self, token: str) -> m.Invitation:
         """What an invitation offers. Holding the token is the credential; no login needed."""
-        resp = self.transport.post("/auth/invitations/lookup", {"invitation": token})
+        resp = self.transport.post("/auth/invitations/lookup", {"invitation": token}, auth=False)
         return m.Invitation.from_dict(resp.body or {})
 
     def invitation_accept_start(self, token: str, *, display_name: str | None = None) -> str:
-        """Start accepting an invitation. Returns the URL to open in a browser."""
+        """Start accepting an invitation. Returns the URL to open in a browser.
+
+        A `POST` rather than a link, unlike sign-up: the token is a credential and
+        travels in a body, never a URL (LG-16).
+        """
         body = {"invitation": token, "displayName": display_name}
-        resp = self.transport.post("/auth/invitations/accept", {k: v for k, v in body.items() if v})
+        resp = self.transport.post(
+            "/auth/invitations/accept", {k: v for k, v in body.items() if v}, auth=False
+        )
         return str(resp.body["location"])
 
 

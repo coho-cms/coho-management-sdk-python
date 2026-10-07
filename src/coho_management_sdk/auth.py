@@ -3,8 +3,9 @@
 The BFF accepts ``Authorization: Bearer <Cognito access token>`` and holds nothing
 for it. So the CLI obtains the token itself:
 
-1. `login` starts a listener on ``127.0.0.1:<port>``, opens the hosted UI with PKCE
-   and exchanges the code **without a client secret** — it is a public client.
+1. `login` starts a listener on the loopback interface, opens the hosted UI with
+   PKCE and ``redirect_uri=http://localhost:<port>/callback``, and exchanges the
+   code **without a client secret** — it is a public client.
 2. Tokens go into the OS keyring (the ``keyring`` package; a ``0600`` file when
    there is none), one entry per profile.
 3. `TokenProvider` refreshes when within a minute of expiry — the same margin the
@@ -13,9 +14,13 @@ for it. So the CLI obtains the token itself:
    identity and is a stopgap until service accounts exist.
 
 ⚠️ Cognito requires the callback URL to match **exactly**, port included, so the
-app client must be registered with ``http://127.0.0.1:<callback_port>/callback``
+app client must be registered with ``http://localhost:<callback_port>/callback``
 and the profile must use the same port. There is no dynamic-port loopback rule as
 in RFC 8252 §7.3.
+
+⚠️ ``localhost``, not ``127.0.0.1``, because Cognito allows plain http for
+localhost alone. A browser may resolve ``localhost`` to either loopback address,
+so the listener answers on ``127.0.0.1`` and, where the machine has it, ``::1``.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import http.server
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 import webbrowser
@@ -244,12 +250,24 @@ _FAILURE_PAGE = (
 )
 
 
-class _CallbackServer(http.server.HTTPServer):
-    def __init__(self, port: int, expected_state: str) -> None:
-        super().__init__(("127.0.0.1", port), _CallbackHandler)
+class _Callback:
+    """What the listeners share: the state they expect, and the first answer."""
+
+    def __init__(self, expected_state: str) -> None:
         self.expected_state = expected_state
         self.result: dict[str, str] | None = None
         self.event = threading.Event()
+
+
+class _CallbackServer(http.server.HTTPServer):
+    """One loopback listener; `login` runs one per loopback address, sharing a `_Callback`."""
+
+    def __init__(
+        self, host: str, port: int, callback: _Callback, family: int = socket.AF_INET
+    ) -> None:
+        self.address_family = family  # read by socketserver when it creates the socket
+        self.callback = callback
+        super().__init__((host, port), _CallbackHandler)
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -265,14 +283,16 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
-        ok = query.get("state") == self.server.expected_state and "code" in query
+        callback = self.server.callback
+        ok = query.get("state") == callback.expected_state and "code" in query
         self.send_response(200 if ok else 400)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(_SUCCESS_PAGE if ok else _FAILURE_PAGE)
-        self.server.result = query
-        self.server.event.set()
+        if callback.result is None:
+            callback.result = query
+        callback.event.set()
 
 
 def authorize_url(profile: Profile, *, state: str, challenge: str, redirect_uri: str) -> str:
@@ -325,27 +345,33 @@ def login(
     state = secrets.token_urlsafe(32)
     verifier, challenge = _pkce_pair()
     listen_port = profile.callback_port if port is None else port
+    callback = _Callback(state)
     try:
-        server = _CallbackServer(listen_port, state)
+        servers = [_CallbackServer("127.0.0.1", listen_port, callback)]
     except OSError as exc:
-        raise AuthError(f"cannot listen on 127.0.0.1:{listen_port}: {exc}") from exc
-    actual_port = server.server_address[1]
-    redirect_uri = f"http://127.0.0.1:{actual_port}/callback"
+        raise AuthError(f"cannot listen on localhost:{listen_port}: {exc}") from exc
+    actual_port = servers[0].server_address[1]
+    # Browsers may resolve `localhost` to ::1 first. Answer there too, on the same
+    # port, when the machine has IPv6 loopback; carry on without it when it does not.
+    with contextlib.suppress(OSError):
+        servers.append(_CallbackServer("::1", actual_port, callback, family=socket.AF_INET6))
+    redirect_uri = f"http://localhost:{actual_port}/callback"
     url = authorize_url(profile, state=state, challenge=challenge, redirect_uri=redirect_uri)
 
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         if on_url:
             on_url(url)
         (open_browser or webbrowser.open)(url)
-        if not server.event.wait(timeout):
+        if not callback.event.wait(timeout):
             raise AuthError(f"no sign-in completed within {int(timeout)} seconds")
     finally:
-        server.shutdown()
-        server.server_close()
+        for server in servers:
+            server.shutdown()
+            server.server_close()
 
-    result = server.result or {}
+    result = callback.result or {}
     if "error" in result:
         raise AuthError(f"the identity provider refused: {result['error']}")
     if result.get("state") != state or "code" not in result:

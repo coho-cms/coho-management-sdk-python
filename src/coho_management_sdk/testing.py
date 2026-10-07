@@ -29,6 +29,9 @@ ENTRY = "33333333-3333-4333-8333-333333333333"
 ACTOR = "44444444-4444-4444-8444-444444444444"
 USER = "55555555-5555-4555-8555-555555555555"
 
+# The one invitation token the fake recognizes.
+INVITATION_TOKEN = "invite-token-abc"
+
 ME = {
     "user": {"id": USER, "displayName": "Ada", "email": "ada@acme.example"},
     "accounts": [{"accountId": ACCOUNT, "accountName": "Acme", "role": "admin", "actorId": ACTOR}],
@@ -621,6 +624,36 @@ class FakeBff:
                 ],
                 "page": {"limit": 25, "offset": 0, "hasMore": False},
             }
+        )
+
+        # --- before a login: invitations. The token in the body is the credential ---
+        def invitation_lookup(request: Request) -> Response:
+            self._record(request)
+            if request.get_json().get("invitation") != INVITATION_TOKEN:
+                return auth_problem(404, "NOT_FOUND", "no such invitation")
+            return ok(
+                {
+                    "id": "inv-1",
+                    "accountId": ACCOUNT,
+                    "accountName": "Acme",
+                    "email": "jane@acme.example",
+                    "role": "member",
+                    "status": "pending",
+                    "createdAt": "2026-09-22T00:00:00Z",
+                    "expiresAt": "2026-09-29T00:00:00Z",
+                }
+            )
+
+        s.expect_request("/auth/invitations/lookup", method="POST").respond_with_handler(
+            invitation_lookup
+        )
+
+        def invitation_accept(request: Request) -> Response:
+            self._record(request)
+            return ok({"location": "https://idp.example/oauth2/authorize?state=accept"})
+
+        s.expect_request("/auth/invitations/accept", method="POST").respond_with_handler(
+            invitation_accept
         )
 
         # --- a non-problem failure, as a proxy would produce ---

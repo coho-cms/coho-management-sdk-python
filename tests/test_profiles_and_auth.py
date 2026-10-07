@@ -135,6 +135,8 @@ def test_pkce_login_end_to_end(tmp_path: Path) -> None:
         q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
         assert urlparse(url).netloc == "idp.example" and q["code_challenge_method"] == "S256"
         assert q["scope"] == "openid coho-auth/self" and q["client_id"] == "cid"
+        # localhost, never 127.0.0.1: Cognito allows plain http for localhost alone.
+        assert urlparse(q["redirect_uri"]).hostname == "localhost"
 
         def hit() -> None:
             urllib.request.urlopen(f"{q['redirect_uri']}?code=the-code&state={q['state']}").read()
@@ -145,6 +147,52 @@ def test_pkce_login_end_to_end(tmp_path: Path) -> None:
     assert tokens.access_token == "at" and tokens.refresh_token == "rt"
     assert seen["grant_type"] == "authorization_code" and seen["code"] == "the-code"
     assert "code_verifier" in seen and "client_secret" not in seen
+
+
+def _ipv6_loopback() -> bool:
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1",
+        pytest.param(
+            "[::1]",
+            marks=pytest.mark.skipif(not _ipv6_loopback(), reason="no IPv6 loopback here"),
+        ),
+    ],
+)
+def test_the_callback_answers_on_either_loopback_address(host: str) -> None:
+    """A browser may resolve `localhost` to 127.0.0.1 or to ::1; both must reach the CLI."""
+    import threading
+    import urllib.request
+    from urllib.parse import parse_qs, urlparse
+
+    http = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"access_token": "at", "expires_in": 60})
+        )
+    )
+    profile = Profile(name="p", oidc_domain="idp.example", client_id="cid")
+
+    def fake_browser(url: str) -> None:
+        q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+        port = urlparse(q["redirect_uri"]).port
+        callback = f"http://{host}:{port}/callback?code=c&state={q['state']}"
+        threading.Thread(
+            target=lambda: urllib.request.urlopen(callback).read(), daemon=True
+        ).start()
+
+    tokens = auth.login(profile, open_browser=fake_browser, timeout=10, port=0, http=http)
+    assert tokens.access_token == "at"
 
 
 def test_login_requires_provider_config() -> None:
