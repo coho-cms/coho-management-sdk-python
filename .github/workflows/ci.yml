@@ -34,7 +34,11 @@ jobs:
           - os: windows-latest
             python: "3.13"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # Every commit and tag: the version is computed from them, and a shallow
+          # clone makes it a meaningless 0.1.dev1.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -62,7 +66,11 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # Every commit and tag: the version is computed from them, and a shallow
+          # clone makes it a meaningless 0.1.dev1.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -70,17 +78,31 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Refuse a dev-version tag
+        # Dev versions come from commits after a release (0.2.1.dev3), never from
+        # tags. A tag like v0.3.0.dev1 also makes every later build fail, because
+        # setuptools-scm cannot number a dev build of a dev build.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ [.-]?dev[0-9]*$ ]]; then
+            echo "::error::Don't tag dev versions: every commit after a release already builds one."
+            echo "Delete this tag (git push --delete origin $GITHUB_REF_NAME), or every later build fails."
+            exit 1
+          fi
+
       - name: Build the wheel and the sdist
         run: uv build --out-dir dist
 
-      - name: Refuse a tag that disagrees with the version
-        # hatchling names the wheel from __version__, so the filename is the check.
+      - name: Refuse a tag that is not a version in its standard form
+        # The version comes from the tag, but normalized to PEP 440: `v0.2.0-dev1`
+        # builds 0.2.0.dev1. A tag that does not match its own build would
+        # mislead anyone comparing the two, so the wheel's filename is the check.
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           expected="dist/coho_management_sdk-${GITHUB_REF_NAME#v}-py3-none-any.whl"
           if [ ! -f "$expected" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match __version__ in src/coho_management_sdk/_version.py"
-            echo "expected $expected, built:"
+            echo "::error::tag $GITHUB_REF_NAME is not a version in PEP 440's standard form."
+            echo "Use forms like v0.2.0, v0.2.0rc1 or v0.2.0.dev1. Built instead:"
             ls -1 dist
             exit 1
           fi
@@ -133,6 +155,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # An alpha, beta or release candidate is a pre-release on GitHub too, so
+          # it never shows as the latest release.
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then
+            prerelease="--prerelease"
+          fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
           else
@@ -140,7 +168,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --title "coho-management-sdk $GITHUB_REF_NAME" \
               --generate-notes \
-              --verify-tag
+              --verify-tag $prerelease
           fi
 
   publish-pypi:

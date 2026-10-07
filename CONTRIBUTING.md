@@ -22,7 +22,7 @@ src/coho_management_sdk/
   models.py        typed views over the contract's JSON (each keeps .raw)
   client.py        Coho → Account → Project → Ref, and the *Api classes
   testing.py       FakeBff: a contract-shaped fake, published for downstream tests
-  _version.py      the single source of truth for the version
+  _version.py      generated from git tags at build time; git-ignored
 tests/             unit and contract tests against FakeBff
 contracts/         bff.yaml, authoring.yaml, delivery.yaml, PIN (the server commit)
 docs/              the library reference
@@ -56,17 +56,41 @@ match. Bumping the pin is the release trigger.
 
 ## Versioning and releasing
 
-The version lives in `src/coho_management_sdk/_version.py` alone; `pyproject.toml` reads it
-(`[tool.hatch.version]`), and a test asserts the installed metadata agrees.
+The version comes from git tags, computed at build time by `hatch-vcs` (with
+`setuptools-scm` underneath). Nothing in the source tree holds it; the build writes
+`src/coho_management_sdk/_version.py`, which is git-ignored, and a test asserts it
+agrees with the installed metadata.
 
-1. Bump `__version__` and add a `CHANGELOG.md` entry.
-2. Merge to `main`, then tag: `git tag v0.1.0 && git push origin v0.1.0`.
-3. CI tests, builds a wheel and an sdist, **fails if the tag and the version disagree**,
-   installs the wheel into a clean environment to check it imports, uploads both files
-   as a build artifact, and attaches them to a GitHub Release for the tag.
+| You build from | Version |
+|---|---|
+| a commit tagged `v0.2.0` | `0.2.0` |
+| three commits after it | `0.2.1.dev3`: a dev build, Python's equivalent of a Maven SNAPSHOT |
+| a commit tagged `v0.3.0rc1` | `0.3.0rc1` |
+| a repository with no tags yet | `0.1.devN` |
+
+Installers skip dev and pre-release versions unless a requirement names one, so
+publishing them never surprises anybody: the CLI asks for `>=0.1.0.dev0` on purpose.
+
+To release:
+
+1. Add a `CHANGELOG.md` entry, and merge to `main`.
+2. Tag the commit and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Use
+   `vX.Y.ZaN`, `bN` or `rcN` for alphas, betas and release candidates; GitHub marks
+   those as pre-releases.
+3. CI tests, builds a wheel and an sdist, installs the wheel into a clean environment
+   to check it imports, uploads both as a build artifact, and attaches them to a
+   GitHub Release for the tag.
+
+⚠️ **Never tag a dev version.** Dev versions come from commits after a release. A tag
+like `v0.3.0.dev1` makes every later build fail, since a dev build of a dev build
+cannot be numbered, so CI refuses one before building. It also refuses a tag that is
+not in PEP 440's standard form, such as `v0.2.0-rc1`, which would build `0.2.0rc1`
+and no longer match its own tag. If one slips through, delete it:
+`git push --delete origin <tag>`.
 
 Every run on `main` and every pull request also uploads the built distributions as an
-artifact, so a build is downloadable without a release.
+artifact, so a dev build is downloadable without a release. CI fetches the whole history
+(`fetch-depth: 0`); a shallow clone has no tags and would build a meaningless `0.1.dev1`.
 
 ### Publishing to PyPI as well
 

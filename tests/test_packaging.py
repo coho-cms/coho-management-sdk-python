@@ -11,7 +11,7 @@ import coho_management_sdk
 
 
 def test_version_is_a_single_source_of_truth() -> None:
-    """`_version.py` is what hatchling reads, so the two can never disagree."""
+    """The build writes `_version.py` from the same git tag it stamps into the metadata."""
     try:
         installed = version("coho-management-sdk")
     except PackageNotFoundError:  # pragma: no cover - only when running from a bare checkout

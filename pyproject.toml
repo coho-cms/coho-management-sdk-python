@@ -22,7 +22,7 @@ dependencies = [
     "httpx>=0.27",
     "tomli-w>=1.0",
 ]
-# The version lives in one place: src/coho_management_sdk/_version.py, read by hatchling below.
+# The version comes from git tags at build time (hatch-vcs, below).
 dynamic = ["version"]
 
 [project.optional-dependencies]
@@ -39,11 +39,24 @@ Changelog = "https://github.com/coho-cms/coho-management-sdk-python/blob/main/CH
 Issues = "https://github.com/coho-cms/coho-management-sdk-python/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/coho_management_sdk/_version.py"
+# From git tags, through hatch-vcs and setuptools-scm. Tag `v0.2.0` builds 0.2.0;
+# three commits after it builds 0.2.1.dev3. Before the first tag, builds are
+# 0.1.devN. CONTRIBUTING.md has the release steps.
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Drop setuptools-scm's `+g<commit>` suffix: PyPI refuses such local versions, and
+# the dev number already differs from one commit to the next.
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+# Written at build time so `coho_management_sdk.__version__` keeps working. It is
+# generated, so it is git-ignored.
+version-file = "src/coho_management_sdk/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/coho_management_sdk"]

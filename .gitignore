@@ -223,3 +223,6 @@ __marimo__/
 .ruff_cache/
 .pytest_cache/
 dist/
+
+# Generated at build time from git tags by hatch-vcs (pyproject.toml).
+src/coho_management_sdk/_version.py

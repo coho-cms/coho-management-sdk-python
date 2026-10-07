@@ -8,6 +8,12 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Changed
 
+- The version comes from git tags at build time, through `hatch-vcs`, instead of a
+  hand-edited `_version.py`. Tag `v0.2.0` builds 0.2.0; commits after it build dev
+  versions such as `0.2.1.dev3`. CI refuses dev-version tags, marks alpha, beta and
+  release-candidate tags as GitHub pre-releases, and fetches full history so tags are
+  visible.
+
 - `Coho.signup_url()` replaces `signup_start()`. Sign-up is now a page to open in a
   browser, `GET /auth/signup` on the BFF, and the SDK makes no request for it: it
   must stay an interactive session, where a captcha will be verified before release.
