@@ -839,6 +839,58 @@ class DeliveryKey:
 
 
 @dataclass(slots=True)
+class ProjectToken:
+    """A project token's metadata (doc 29). Never the token, never its hash."""
+
+    id: str
+    """Also the id it signs content with, so history names it."""
+    label: str
+    role: str
+    state: str
+    """``active``, ``expired`` or ``revoked``."""
+    created_by: str
+    created_at: str
+    expires_at: str
+    last_used_at: str | None = None
+    revoked_at: str | None = None
+    revoked_by: str | None = None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> ProjectToken:
+        return cls(
+            id=str(raw.get("id", "")),
+            label=str(raw.get("label", "")),
+            role=str(raw.get("role", "")),
+            state=str(raw.get("state", "")),
+            created_by=str(raw.get("createdBy", "")),
+            created_at=str(raw.get("createdAt", "")),
+            expires_at=str(raw.get("expiresAt", "")),
+            last_used_at=raw.get("lastUsedAt"),
+            revoked_at=raw.get("revokedAt"),
+            revoked_by=raw.get("revokedBy"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class CreatedProjectToken:
+    """⚠️ ``token`` is in this response and in no other, ever. Only its hash is stored."""
+
+    token: str
+    project_token: ProjectToken
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> CreatedProjectToken:
+        return cls(
+            token=str(raw.get("token", "")),
+            project_token=ProjectToken.from_dict(raw.get("projectToken") or {}),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
 class IssuedDeliveryKey:
     """⚠️ ``key`` is in this response and in no other, ever. Only its hash is stored."""
 

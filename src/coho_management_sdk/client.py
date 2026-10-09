@@ -107,8 +107,28 @@ class Coho:
     def accounts(self) -> list[m.Membership]:
         return self.me().accounts
 
+    @property
+    def uses_project_token(self) -> bool:
+        """True when this client acts with a project token (doc 29), not as a person."""
+        try:
+            token = self.token_provider() if self.token_provider else None
+        except CohoError:
+            return False
+        return bool(token) and str(token).startswith(PROJECT_TOKEN_PREFIX)
+
     def account(self, account: str) -> Account:
-        """By id or by name. A name is resolved through ``/me``; an id is used as-is."""
+        """By id or by name. A name is resolved through ``/me``; an id is used as-is.
+
+        With a project token there is no ``/me`` to ask — the BFF refuses it, since a
+        token is not a person — so the account must be given by id.
+        """
+        if self.uses_project_token:
+            if not _looks_like_id(account):
+                raise CohoError(
+                    f"a project token needs the account's id, not a name ('{account}'): "
+                    "there is no /me to look a name up in"
+                )
+            return Account(self, account)
         membership = self.me().membership(account)
         if membership is None:
             # It may still be an id the session does not list (e.g. a stale cache).
@@ -165,6 +185,10 @@ class Coho:
             "/auth/invitations/accept", {k: v for k, v in body.items() if v}, auth=False
         )
         return str(resp.body["location"])
+
+
+# How a project token announces itself (doc 29).
+PROJECT_TOKEN_PREFIX = "coho_pt_"
 
 
 def _looks_like_id(value: str) -> bool:
@@ -320,6 +344,7 @@ class Project:
         self.tiers = TiersApi(self)
         self.roles = RolesApi(self)
         self.delivery_keys = DeliveryKeysApi(self)
+        self.tokens = ProjectTokensApi(self)
 
     def info(self, *, refresh: bool = False) -> m.ProjectInfo:
         if self._info is None or refresh:
@@ -642,6 +667,38 @@ class RolesApi:
 
     def revoke(self, actor_id: str) -> None:
         self._t.delete(f"{self._p.path}/roles/{segment(actor_id)}")
+
+
+class ProjectTokensApi:
+    """API keys for automation, one project and one role each (doc 29). Needs ``owner``.
+
+    Use one as ``COHO_TOKEN`` (or ``Coho(url, token=…)``): it is sent as the bearer and
+    works only for this project's content.
+    """
+
+    ROLES = ("viewer", "author", "maintainer", "release_manager")
+
+    def __init__(self, project: Project) -> None:
+        self._p = project
+        self._t = project._t
+
+    def list(self) -> builtins.list[m.ProjectToken]:
+        """Every token, revoked and expired ones included."""
+        body = self._t.get(f"{self._p.path}/tokens").body
+        return [m.ProjectToken.from_dict(t) for t in (body or {}).get("tokens", [])]
+
+    def create(
+        self, label: str, role: str, *, expires_in_days: int | None = None
+    ) -> m.CreatedProjectToken:
+        """⚠️ The token is in the result and nowhere else, ever. ``role`` is below owner."""
+        body: JSON = {"label": label, "role": role}
+        if expires_in_days is not None:
+            body["expiresInDays"] = expires_in_days
+        return m.CreatedProjectToken.from_dict(self._t.post(f"{self._p.path}/tokens", body).body)
+
+    def revoke(self, token_id: str) -> None:
+        """Takes effect on the token's next request. Revoking twice is not an error."""
+        self._t.delete(f"{self._p.path}/tokens/{segment(token_id)}")
 
 
 class DeliveryKeysApi:

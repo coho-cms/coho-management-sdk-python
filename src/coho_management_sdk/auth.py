@@ -48,6 +48,8 @@ from .errors import AuthError, NotLoggedIn
 from .profiles import Profile, config_dir, restrict_to_owner
 
 ENV_ACCESS_TOKEN = "COHO_ACCESS_TOKEN"
+# A project token (doc 29): automation's own credential, one project and one role.
+ENV_PROJECT_TOKEN = "COHO_TOKEN"
 REFRESH_MARGIN_SECONDS = 60
 KEYRING_SERVICE = "coho"
 
@@ -452,7 +454,9 @@ def _token_request(
 class TokenProvider:
     """Hands the transport a live access token, refreshing and re-storing as needed.
 
-    Resolution order: ``COHO_ACCESS_TOKEN`` → explicit ``token`` → the profile's store.
+    Resolution order: ``COHO_TOKEN`` (a project token) → ``COHO_ACCESS_TOKEN`` →
+    explicit ``token`` → the profile's store. A project token is opaque: it is sent
+    as it is, never decoded and never refreshed.
     """
 
     def __init__(
@@ -471,7 +475,7 @@ class TokenProvider:
 
     def current(self) -> TokenSet | None:
         """The stored tokens, without refreshing. ``None`` when not logged in."""
-        if env := os.environ.get(ENV_ACCESS_TOKEN):
+        if env := os.environ.get(ENV_PROJECT_TOKEN) or os.environ.get(ENV_ACCESS_TOKEN):
             return TokenSet(access_token=env)
         if self._explicit:
             return TokenSet(access_token=self._explicit)

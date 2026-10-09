@@ -417,6 +417,33 @@ class FakeBff:
             )
 
         s.expect_request(f"{p}/delivery-keys", method="POST").respond_with_handler(issue_key)
+
+        # --- project tokens (doc 29) ---
+        token_doc = {
+            "id": "tok-1",
+            "label": "CI",
+            "role": "maintainer",
+            "state": "active",
+            "createdBy": ACTOR,
+            "createdAt": "now",
+            "expiresAt": "later",
+        }
+
+        def create_token(request: Request) -> Response:
+            self._record(request)
+            body = request.get_json()
+            if body.get("role") not in ("viewer", "author", "maintainer", "release_manager"):
+                return problem(400, "BAD_REQUEST", "role must be below owner")
+            doc = {**token_doc, "label": body["label"], "role": body["role"]}
+            return ok({"token": "coho_pt_SECRET", "projectToken": doc}, 201)
+
+        def revoke_token(request: Request) -> Response:
+            self._record(request)
+            return Response(status=204)
+
+        s.expect_request(f"{p}/tokens", method="POST").respond_with_handler(create_token)
+        s.expect_request(f"{p}/tokens", method="GET").respond_with_json({"tokens": [token_doc]})
+        s.expect_request(f"{p}/tokens/tok-1", method="DELETE").respond_with_handler(revoke_token)
         s.expect_request(f"{p}/delivery-keys", method="GET").respond_with_json(
             {"keys": [{"id": "key-1", "label": "site", "createdAt": "now"}], "publicRefs": ["prod"]}
         )

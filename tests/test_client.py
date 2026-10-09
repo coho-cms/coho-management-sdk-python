@@ -4,6 +4,8 @@ import pytest
 
 from coho_management_sdk import Coho, Resolution
 from coho_management_sdk import errors as e
+from coho_management_sdk.auth import TokenProvider
+from coho_management_sdk.profiles import Profile
 from coho_management_sdk.testing import ACCOUNT, ACTOR, ENTRY, PROJECT, FakeBff
 
 
@@ -242,3 +244,37 @@ def test_non_problem_failure_is_transport_error(coho: Coho) -> None:
     with pytest.raises(e.TransportError) as info:
         Account(coho, "gateway").projects.create("x")
     assert info.value.code == "HTTP_502"
+
+
+def test_project_tokens_create_list_and_revoke(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    created = project.tokens.create("CI", "maintainer", expires_in_days=30)
+    assert created.token == "coho_pt_SECRET" and created.project_token.role == "maintainer"
+    assert bff.last().get_json() == {"label": "CI", "role": "maintainer", "expiresInDays": 30}
+
+    [listed] = project.tokens.list()
+    assert (listed.id, listed.state) == ("tok-1", "active")
+
+    project.tokens.revoke("tok-1")
+    assert bff.last().method == "DELETE" and bff.last().path.endswith("/tokens/tok-1")
+
+
+def test_a_project_token_in_the_environment_is_sent_as_the_bearer_untouched(
+    bff: FakeBff, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COHO_TOKEN", "coho_pt_FROM_ENV")
+    monkeypatch.setenv("COHO_ACCESS_TOKEN", "a-person-token")
+    provider = TokenProvider(Profile(name="ci", url=bff.url, token_store="file"))
+    assert provider() == "coho_pt_FROM_ENV"
+
+
+def test_with_a_project_token_an_account_id_is_used_without_asking_me(
+    bff: FakeBff, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COHO_TOKEN", "coho_pt_FROM_ENV")
+    coho = Coho(bff.url)
+    assert coho.uses_project_token
+    assert coho.account(ACCOUNT).id == ACCOUNT
+    assert not any(r.path == "/api/v1/me" for r in bff.requests)
+    with pytest.raises(e.CohoError, match="account's id"):
+        coho.account("acme")
