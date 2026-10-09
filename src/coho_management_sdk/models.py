@@ -294,6 +294,26 @@ class ProjectInfo:
 
 
 @dataclass(slots=True)
+class ProjectSummary:
+    """One row of ``GET .../projects``: a project you can open, and your role on it."""
+
+    id: str
+    name: str
+    role: str
+    """Your project role, e.g. ``owner`` (every project, for an account admin) or ``author``."""
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> ProjectSummary:
+        return cls(
+            id=str(raw.get("id", "")),
+            name=str(raw.get("name", "")),
+            role=str(raw.get("role", "")),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
 class RefInfo:
     """A branch, tag or environment — one namespace."""
 

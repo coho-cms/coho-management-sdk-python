@@ -27,6 +27,13 @@ def test_bad_token_is_unauthenticated(bff: FakeBff) -> None:
     assert info.value.code == "UNAUTHENTICATED"
 
 
+def test_projects_lists_what_the_server_says_you_can_open(coho: Coho, bff: FakeBff) -> None:
+    projects = coho.account("acme").projects.list()
+    assert [(p.id, p.name, p.role) for p in projects] == [(PROJECT, "Marketing site", "owner")]
+    req = bff.last()
+    assert req.method == "GET" and req.path == f"/api/v1/accounts/{ACCOUNT}/projects"
+
+
 def test_create_project_posts_to_the_account_collection(coho: Coho, bff: FakeBff) -> None:
     project = coho.account("acme").projects.create("Marketing site")
     assert project.id == PROJECT

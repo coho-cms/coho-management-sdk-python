@@ -273,11 +273,19 @@ class InvitationsApi:
 
 
 class ProjectsApi:
-    """Create and open projects. ⚠️ There is no server-side listing yet (doc 04 §9)."""
+    """List, create and open projects."""
 
     def __init__(self, account: Account) -> None:
         self._a = account
         self._t = account._t
+
+    def list(self) -> list[m.ProjectSummary]:
+        """The projects in this account you can open, and your role on each.
+
+        An account admin sees every project; anyone else the ones granted to them.
+        """
+        body = self._t.get(f"{self._a.path}/projects").body
+        return [m.ProjectSummary.from_dict(p) for p in (body or {}).get("projects", [])]
 
     def create(self, name: str) -> Project:
         """Create and bootstrap a project: trunk ``v0.0.x`` and four environments."""

@@ -37,6 +37,9 @@ ME = {
     "accounts": [{"accountId": ACCOUNT, "accountName": "Acme", "role": "admin", "actorId": ACTOR}],
 }
 
+# What GET .../projects lists. Module-level so a test can change it.
+PROJECTS = [{"id": PROJECT, "name": "Marketing site", "role": "owner"}]
+
 PROJECT_DOC = {
     "id": PROJECT,
     "name": "Marketing site",
@@ -172,6 +175,14 @@ class FakeBff:
         s.expect_request(
             f"/api/v1/accounts/{ACCOUNT}/projects", method="POST"
         ).respond_with_handler(create_project)
+
+        def list_projects(request: Request) -> Response:
+            self._record(request)
+            return ok({"projects": PROJECTS})
+
+        s.expect_request(f"/api/v1/accounts/{ACCOUNT}/projects", method="GET").respond_with_handler(
+            list_projects
+        )
         s.expect_request(p, method="GET").respond_with_json(PROJECT_DOC)
         s.expect_request(f"{p}/refs", method="GET").respond_with_json(
             {
