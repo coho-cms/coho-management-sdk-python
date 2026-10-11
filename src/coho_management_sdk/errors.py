@@ -128,6 +128,16 @@ class NotFound(CohoError):
     code = "NOT_FOUND"
 
 
+class AccountNotFound(NotFound):
+    """No such account, or one the caller is not in: the BFF answers both the same (LG-21).
+
+    Most often an account remembered from before it was deleted, so worth telling apart
+    from a missing entry or project.
+    """
+
+    code = "ACCOUNT_NOT_FOUND"
+
+
 class RefNotFound(NotFound):
     code = "REF_NOT_FOUND"
 
@@ -290,6 +300,7 @@ _BY_CODE: dict[str, type[CohoError]] = {
         Unauthenticated,
         Forbidden,
         NotFound,
+        AccountNotFound,
         RefNotFound,
         VersionConflict,
         PreconditionRequired,

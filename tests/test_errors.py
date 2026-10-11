@@ -26,6 +26,17 @@ def test_problem_maps_to_subclass_by_code() -> None:
     assert err.expected_version == "a" and err.current_version == "b"
 
 
+def test_an_account_not_found_is_its_own_not_found() -> None:
+    r = _resp(
+        404,
+        '{"code":"ACCOUNT_NOT_FOUND","title":"No such account","status":404}',
+        "application/problem+json",
+    )
+    err = e.error_for_response(r)
+    assert isinstance(err, e.AccountNotFound) and isinstance(err, e.NotFound)
+    assert err.code == "ACCOUNT_NOT_FOUND"
+
+
 def test_auth_tier_bare_shape_is_still_mapped() -> None:
     r = _resp(409, '{"code":"LAST_ADMIN","detail":"would leave no admin"}', "application/json")
     err = e.error_for_response(r)

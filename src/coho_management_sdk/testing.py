@@ -18,6 +18,7 @@ detail}`` problems, so a test reads like a transcript against the real thing.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pytest_httpserver import HTTPServer
@@ -25,6 +26,9 @@ from werkzeug.wrappers import Request, Response
 
 ACCOUNT = "11111111-1111-4111-8111-111111111111"
 PROJECT = "22222222-2222-4222-8222-222222222222"
+# An account that no longer exists, as one remembered from before a reset is: everything
+# under it answers ACCOUNT_NOT_FOUND, as the BFF does for an account the caller is not in.
+GONE_ACCOUNT = "33333333-3333-4333-8333-333333333333"
 ENTRY = "33333333-3333-4333-8333-333333333333"
 ACTOR = "44444444-4444-4444-8444-444444444444"
 USER = "55555555-5555-4555-8555-555555555555"
@@ -114,6 +118,9 @@ class FakeBff:
             return ok(ME)
 
         s.expect_request("/api/v1/me", method="GET").respond_with_handler(me)
+        s.expect_request(
+            re.compile(rf"^/api/v1/accounts/{GONE_ACCOUNT}(/.*)?$")
+        ).respond_with_handler(lambda request: problem(404, "ACCOUNT_NOT_FOUND", "No such account"))
 
         # --- account management (auth tier shapes) ---
         s.expect_request(f"/api/v1/accounts/{ACCOUNT}/users", method="GET").respond_with_json(

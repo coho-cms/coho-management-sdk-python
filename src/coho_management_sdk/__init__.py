@@ -23,6 +23,7 @@ from .auth import TokenProvider, TokenSet, login
 from .client import Account, Coho, Preview, Project, Ref
 from .errors import (
     AccountAdminRequired,
+    AccountNotFound,
     AuthError,
     CohoError,
     EnvironmentMoved,
@@ -82,6 +83,7 @@ __all__ = [
     "Forbidden",
     "AccountAdminRequired",
     "NotFound",
+    "AccountNotFound",
     "VersionConflict",
     "PreconditionRequired",
     "ValidationFailed",

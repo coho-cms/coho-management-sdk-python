@@ -12,6 +12,9 @@ All notable changes to `coho-management-sdk`. The format follows
   `signup_url()` is for sign-up. Makes no request.
 - `FakeBff.tokens`: the bearer tokens its `/me` answers for, so a test can stand for an
   identity that finishes setting up mid-test.
+- `AccountNotFound`, a `NotFound` for the BFF's `ACCOUNT_NOT_FOUND`: an account that does not
+  exist, or one the caller is not in. `FakeBff` answers it for everything under
+  `testing.GONE_ACCOUNT`.
 
 ### Changed
 
