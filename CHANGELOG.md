@@ -6,6 +6,13 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Coho.login_url()`: the BFF's sign-in page, for a person to open in a browser, as
+  `signup_url()` is for sign-up. Makes no request.
+- `FakeBff.tokens`: the bearer tokens its `/me` answers for, so a test can stand for an
+  identity that finishes setting up mid-test.
+
 ### Changed
 
 - The version comes from git tags at build time, through `hatch-vcs`, instead of a

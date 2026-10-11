@@ -85,6 +85,9 @@ class FakeBff:
     def __init__(self, server: HTTPServer) -> None:
         self.server = server
         self.requests: list[Request] = []
+        # The bearer tokens `/me` answers for. Add one to stand for an identity that has
+        # just finished setting up in a browser.
+        self.tokens: set[str] = {"test-token"}
         self.snapshot_not_ready_times = 0
         self.entry_version = "v1"
         self.entry_fields: dict[str, Any] = {"title": {"en-US": "Hello"}, "rank": 1}
@@ -106,7 +109,7 @@ class FakeBff:
 
         def me(request: Request) -> Response:
             self._record(request)
-            if request.headers.get("Authorization") != "Bearer test-token":
+            if request.headers.get("Authorization", "").removeprefix("Bearer ") not in self.tokens:
                 return problem(401, "UNAUTHENTICATED", "no credential")
             return ok(ME)
 

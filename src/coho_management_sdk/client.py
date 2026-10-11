@@ -147,6 +147,17 @@ class Coho:
     #
     # What a person does before they have a login, so none of these sends one.
 
+    def login_url(self, *, return_to: str = "/api/v1/me") -> str:
+        """The BFF's sign-in page, for a person to open in a browser. Makes no request.
+
+        Where an identity with no organization yet is asked to name one (UL-19): the
+        CLI's own sign-in reaches the identity provider directly, so only this page
+        can finish setting such an identity up. ``return_to`` is where the browser
+        lands once it is done.
+        """
+        query = urlencode({"returnTo": return_to}, quote_via=quote)
+        return f"{self.transport.base_url}/auth/login?{query}"
+
     def signup_url(
         self,
         account_name: str,

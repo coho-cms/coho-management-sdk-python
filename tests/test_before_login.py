@@ -59,6 +59,17 @@ def test_before_login_calls_never_send_a_login_even_when_there_is_one(
     assert "Authorization" not in bff.last().headers
 
 
+def test_login_is_a_page_to_open_and_makes_no_request(logged_out: Coho, bff: FakeBff) -> None:
+    before = len(bff.requests)
+    url = logged_out.login_url()
+    assert len(bff.requests) == before
+
+    parsed = urlparse(url)
+    assert f"{parsed.scheme}://{parsed.netloc}" == bff.url
+    assert parsed.path == "/auth/login"
+    assert parse_qs(parsed.query) == {"returnTo": ["/api/v1/me"]}
+
+
 def test_signup_is_a_page_to_open_and_makes_no_request(logged_out: Coho, bff: FakeBff) -> None:
     before = len(bff.requests)
     url = logged_out.signup_url("Maya & Co", display_name="Maya")
