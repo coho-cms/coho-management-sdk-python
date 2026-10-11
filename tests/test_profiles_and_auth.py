@@ -112,10 +112,21 @@ def test_provider_refreshes_near_expiry(tmp_path: Path) -> None:
     assert stored is not None and stored.access_token == "fresh" and stored.refresh_token == "rt"
 
 
+def _hit_without_following(url: str) -> tuple[int, str | None]:
+    """The browser's request to the loopback listener, stopping at its redirect."""
+    import http.client
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    conn = http.client.HTTPConnection(u.hostname or "localhost", u.port, timeout=5)
+    conn.request("GET", f"{u.path}?{u.query}")
+    response = conn.getresponse()
+    return response.status, response.getheader("Location")
+
+
 def test_pkce_login_end_to_end(tmp_path: Path) -> None:
     """Drive the loopback callback ourselves, standing in for the browser."""
     import threading
-    import urllib.request
     from urllib.parse import parse_qs, urlparse
 
     seen: dict[str, str] = {}
@@ -139,12 +150,17 @@ def test_pkce_login_end_to_end(tmp_path: Path) -> None:
         assert urlparse(q["redirect_uri"]).hostname == "localhost"
 
         def hit() -> None:
-            urllib.request.urlopen(f"{q['redirect_uri']}?code=the-code&state={q['state']}").read()
+            landed.append(
+                _hit_without_following(f"{q['redirect_uri']}?code=the-code&state={q['state']}")
+            )
 
         threading.Thread(target=hit, daemon=True).start()
 
+    landed: list[tuple[int, str | None]] = []
     tokens = auth.login(profile, open_browser=fake_browser, timeout=10, port=0, http=http)
     assert tokens.access_token == "at" and tokens.refresh_token == "rt"
+    # The browser goes on to the sign-in service's own page, carrying nothing from the callback.
+    assert landed == [(303, "https://idp.example/cli/signed-in")]
     assert seen["grant_type"] == "authorization_code" and seen["code"] == "the-code"
     assert "code_verifier" in seen and "client_secret" not in seen
 
@@ -173,7 +189,6 @@ def _ipv6_loopback() -> bool:
 def test_the_callback_answers_on_either_loopback_address(host: str) -> None:
     """A browser may resolve `localhost` to 127.0.0.1 or to ::1; both must reach the CLI."""
     import threading
-    import urllib.request
     from urllib.parse import parse_qs, urlparse
 
     http = httpx.Client(
@@ -187,12 +202,32 @@ def test_the_callback_answers_on_either_loopback_address(host: str) -> None:
         q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
         port = urlparse(q["redirect_uri"]).port
         callback = f"http://{host}:{port}/callback?code=c&state={q['state']}"
-        threading.Thread(
-            target=lambda: urllib.request.urlopen(callback).read(), daemon=True
-        ).start()
+        threading.Thread(target=lambda: _hit_without_following(callback), daemon=True).start()
 
     tokens = auth.login(profile, open_browser=fake_browser, timeout=10, port=0, http=http)
     assert tokens.access_token == "at"
+
+
+def test_a_callback_with_the_wrong_state_is_sent_to_the_failure_page() -> None:
+    import threading
+    from urllib.parse import parse_qs, urlparse
+
+    http = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"access_token": "at"}))
+    )
+    profile = Profile(name="p", oidc_domain="https://idp.example/", client_id="cid")
+    landed: list[tuple[int, str | None]] = []
+
+    def fake_browser(url: str) -> None:
+        q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+        wrong = f"{q['redirect_uri']}?code=c&state=not-the-state"
+        threading.Thread(
+            target=lambda: landed.append(_hit_without_following(wrong)), daemon=True
+        ).start()
+
+    with pytest.raises(AuthError):
+        auth.login(profile, open_browser=fake_browser, timeout=10, port=0, http=http)
+    assert landed == [(303, "https://idp.example/cli/sign-in-failed")]
 
 
 def test_login_requires_provider_config() -> None:

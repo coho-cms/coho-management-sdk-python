@@ -236,27 +236,20 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-_STYLE = b"body{font-family:system-ui,sans-serif;margin:4rem auto;max-width:32rem;color:#222}"
-_SUCCESS_PAGE = (
-    b'<!doctype html><html><head><meta charset="utf-8"><title>coho</title><style>'
-    + _STYLE
-    + b"</style></head><body><h1>Signed in</h1>"
-    b"<p>You can close this window and return to the terminal.</p></body></html>"
-)
-
-_FAILURE_PAGE = (
-    b'<!doctype html><html><head><meta charset="utf-8"><title>coho</title><style>'
-    + _STYLE
-    + b"</style></head><body><h1>Sign-in failed</h1>"
-    b"<p>Return to the terminal for the reason.</p></body></html>"
-)
+# The sign-in service's pages for the end of a terminal sign-in (doc 27 LS-16). The loopback
+# listener sends the browser there rather than drawing a page of its own, so the last page
+# looks like every page before it, in the theme the person chose, from one stylesheet.
+_SIGNED_IN_PATH = "/cli/signed-in"
+_FAILED_PATH = "/cli/sign-in-failed"
 
 
 class _Callback:
-    """What the listeners share: the state they expect, and the first answer."""
+    """What the listeners share: the expected state, where the browser goes, the first answer."""
 
-    def __init__(self, expected_state: str) -> None:
+    def __init__(self, expected_state: str, domain: str) -> None:
         self.expected_state = expected_state
+        self.signed_in_url = domain + _SIGNED_IN_PATH
+        self.failed_url = domain + _FAILED_PATH
         self.result: dict[str, str] | None = None
         self.event = threading.Event()
 
@@ -287,11 +280,12 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
         callback = self.server.callback
         ok = query.get("state") == callback.expected_state and "code" in query
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # 303 to a fixed page: the code stays here, and nothing from this request is passed on.
+        self.send_response(303)
+        self.send_header("Location", callback.signed_in_url if ok else callback.failed_url)
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
         self.end_headers()
-        self.wfile.write(_SUCCESS_PAGE if ok else _FAILURE_PAGE)
         if callback.result is None:
             callback.result = query
         callback.event.set()
@@ -347,7 +341,7 @@ def login(
     state = secrets.token_urlsafe(32)
     verifier, challenge = _pkce_pair()
     listen_port = profile.callback_port if port is None else port
-    callback = _Callback(state)
+    callback = _Callback(state, _domain(profile))
     try:
         servers = [_CallbackServer("127.0.0.1", listen_port, callback)]
     except OSError as exc:

@@ -6,6 +6,13 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- After a browser sign-in, the loopback listener sends the browser on to the sign-in
+  service's own "Signed in" page (`/cli/signed-in`, or `/cli/sign-in-failed`) instead of
+  drawing an unstyled page itself, so the last page matches the rest. The code stays with
+  the listener. Needs a sign-in service that serves those pages.
+
 ### Added
 
 - `Coho.login_url()`: the BFF's sign-in page, for a person to open in a browser, as
