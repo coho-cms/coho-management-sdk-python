@@ -63,6 +63,40 @@ def test_tags_are_refs_of_kind_tag(coho: Coho) -> None:
     assert tag.at == 42 and tag.warnings[0].code == "PENDING_FORWARD_PORT"
 
 
+def test_tag_validate_is_sent_only_when_asked_for(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    project.tags.create("v1.1.0", branch="v0.0.x")
+    assert bff.last().get_json() == {"name": "v1.1.0", "ref": "v0.0.x"}
+    project.tags.create("v1.1.0", branch="v0.0.x", validate=True)
+    assert bff.last().get_json() == {"name": "v1.1.0", "ref": "v0.0.x", "validate": True}
+
+
+def test_a_validated_tag_over_invalid_entries_is_refused_naming_them(
+    coho: Coho, bff: FakeBff
+) -> None:
+    bff.invalid_entries = [
+        {
+            "id": ENTRY,
+            "slug": "hello",
+            "type": "blogPost",
+            "errors": [{"path": "/layout", "message": "required property 'layout' not found"}],
+        },
+        {
+            "id": "44444444-4444-4444-8444-000000000001",
+            "slug": "orphan",
+            "errors": [{"path": "/", "message": "its content type is not on this ref"}],
+        },
+    ]
+    project = coho.account("acme").project(PROJECT)
+    with pytest.raises(e.TagContentInvalid) as info:
+        project.tags.create("v1.1.0", branch="v0.0.x", validate=True)
+    assert info.value.entry_count == 2
+    assert [x["slug"] for x in info.value.invalid_entries] == ["hello", "orphan"]
+    assert "type" not in info.value.invalid_entries[1]
+    # Unasked, the same content is tagged as before.
+    assert project.tags.create("v1.1.0", branch="v0.0.x").at == 42
+
+
 def test_branch_create_and_name_taken(coho: Coho, bff: FakeBff) -> None:
     project = coho.account("acme").project(PROJECT)
     b = project.branches.create("feature/x", from_ref="v0.0.x", description="d")

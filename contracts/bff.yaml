@@ -41,6 +41,7 @@ tags:
   - name: Login
     description: The OIDC dance. No credential is needed; these produce one.
   - name: Session
+  - name: Service
   - name: Account management
     description: Relayed to `:api-auth` with the caller's bearer, at the same path minus `/api`.
   - name: Content
@@ -78,14 +79,44 @@ paths:
               schema: { $ref: '#/components/schemas/RedirectResponse' }
 
   /auth/signup:
+    get:
+      tags: [Login]
+      summary: Redirect the browser to sign up and found a new account
+      description: |
+        The same as the `POST` below, as a link a browser opens rather than a call
+        a client makes; `coho signup` opens it. The sign-in service's sign-up
+        page asks for the organization's name and slug, and the callback ends
+        in `POST /v1/signups` with what it collected (UL-18).
+
+        ⚠️ The `POST` form is removed before release: sign-up must need an
+        interactive session. The page is already captcha-gated.
+      operationId: signupRedirect
+      security: []
+      parameters:
+        - name: accountName
+          in: query
+          description: |
+            Fills in the sign-up page's organization name, which the person can
+            change there. Also used if they sign in with an identity they already
+            had instead of creating one.
+          schema: { type: string }
+        - name: displayName
+          in: query
+          schema: { type: string }
+        - name: returnTo
+          in: query
+          description: A path on this BFF to land on afterwards. Anything that is not a local path becomes `/`.
+          schema: { type: string }
+      responses:
+        '302': { description: To the hosted sign-up UI }
+        '400': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Login]
       summary: Start a sign-up that founds a new account
-      description: The callback ends in `POST /v1/signups` with the ID token and this account name.
+      description: As the `GET` above, for an XHR. The body may be empty.
       operationId: signupStart
       security: []
       requestBody:
-        required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/StartSignupRequest' }
@@ -96,6 +127,73 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RedirectResponse' }
         '400': { $ref: '#/components/responses/Problem' }
+
+  /auth/account-slugs:
+    get:
+      tags: [Login]
+      summary: Whether sign-up could have an account slug
+      description: |
+        Relayed to `GET /v1/account-slugs`. `?slug=` checks one somebody typed,
+        and `?name=` reports the slug a name becomes on the server. `reason` is
+        the code sign-up would be refused with. The sign-in service's sign-up
+        page asks it as the person types, so the answer carries
+        `Access-Control-Allow-Origin` for that origin alone.
+
+        ⚠️ No credential: it is asked before there is anybody to hold one, so it
+        tells a stranger whether an account exists at a slug (UL-18). Rate-limit
+        it at the edge.
+      operationId: accountSlugCheck
+      security: []
+      parameters:
+        - name: name
+          in: query
+          description: An account name to derive a slug from
+          schema: { type: string }
+        - name: slug
+          in: query
+          description: A slug to check as given. Wins over `name`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The slug, and whether it is free
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountSlugCheck' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /auth/organization:
+    post:
+      tags: [Login]
+      summary: Name the organization a signed-in identity never founded
+      description: |
+        The sign-in service's `/organization` page posts this (UL-19). It is where
+        a sign-in lands when the identity is real but has no login here (LG-5):
+        most often a sign-up that stopped before its callback. The BFF holds the
+        ID token from that sign-in under the `coho_registration` cookie and founds
+        the account with it through `POST /v1/signups`, so no password is asked
+        for twice.
+
+        Answers with a redirect either way: to `returnTo` with a session, or back
+        to the page with `?error=<code>` — `ACCOUNT_SLUG_TAKEN` and the other slug
+        codes to try again, `REGISTRATION_EXPIRED` to sign in again.
+      operationId: completeRegistration
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [t, accountName, givenName, familyName]
+              properties:
+                t: { type: string, description: The registration's CSRF token, from the page's URL }
+                accountName: { type: string }
+                accountSlug: { type: string, description: Omitted, the one the name suggests }
+                givenName: { type: string }
+                familyName: { type: string }
+      responses:
+        '302': { description: To `returnTo` with the session cookie set, or back to the page with an error code }
+        '403': { $ref: '#/components/responses/Problem' }
 
   /auth/invitations/lookup:
     post:
@@ -152,6 +250,16 @@ paths:
         named, and opens a session. On any refusal the browser lands on the
         login page with `?error=<code>` — `UNAUTHENTICATED` means a real
         identity with no login here (LG-5): sign up, or ask for an invitation.
+
+        A sign-in whose identity has no login here goes to the sign-in service's
+        organization page instead of the error page, when one is configured
+        (`POST /auth/organization`, UL-19).
+
+        A sign-up's callback also carries what the sign-in service's sign-up
+        page collected (UL-18). Read only when the stored intent is a sign-up;
+        a sign-in's callback carrying them founds nothing. `SIGNUP_INCOMPLETE`
+        means no step named an organization; `ACCOUNT_SLUG_TAKEN` means
+        somebody took the slug while the person was confirming their email.
       operationId: callback
       security: []
       parameters:
@@ -164,6 +272,18 @@ paths:
           schema: { type: string }
         - name: error
           in: query
+          schema: { type: string }
+        - name: account_name
+          in: query
+          description: Sign-up only. The organization's name.
+          schema: { type: string }
+        - name: account_slug
+          in: query
+          description: Sign-up only. Its slug; omitted, the one the name suggests.
+          schema: { type: string }
+        - name: display_name
+          in: query
+          description: Sign-up only. The person's first and last name.
           schema: { type: string }
       responses:
         '302':
@@ -186,6 +306,23 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RedirectResponse' }
+
+  /status:
+    get:
+      tags: [Service]
+      summary: The version deployed, and when it was built
+      description: |
+        Answers without a credential and without calling the services behind the
+        BFF. `version` is the release tag and the build time in UTC, or
+        `dev-local` for a build made outside a release.
+      operationId: status
+      security: []
+      responses:
+        '200':
+          description: The build
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatusResponse' }
 
   /api/v1/me:
     get:
@@ -431,7 +568,11 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: A Cognito access token issued to an app client `:api-auth` accepts.
+      description: |
+        A Cognito access token issued to an app client `:api-auth` accepts — or a
+        project token, `coho_pt_…` (doc 29), which works only for its own project's
+        routes under `/api/v1/accounts/{account}/projects/{project}/…` and gets
+        `403 TOKEN_NOT_ALLOWED` everywhere else, `/api/v1/me` included.
 
   parameters:
     account:
@@ -449,6 +590,14 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+    StatusResponse:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          example: 2026.1.0a3-20261007-172405
+
     StartLoginRequest:
       type: object
       properties:
@@ -456,11 +605,21 @@ components:
 
     StartSignupRequest:
       type: object
-      required: [accountName]
       properties:
-        accountName: { type: string }
+        accountName: { type: string, description: Fills in the sign-up page; the person can change it }
         displayName: { type: string }
         returnTo: { type: string }
+
+    AccountSlugCheck:
+      type: object
+      required: [slug, available]
+      properties:
+        slug: { type: string, example: hewlett-packard }
+        available: { type: boolean }
+        reason:
+          type: string
+          enum: [ACCOUNT_SLUG_INVALID, ACCOUNT_SLUG_RESERVED, ACCOUNT_SLUG_TAKEN]
+          description: Present when `available` is false
 
     AcceptInvitationRequest:
       type: object
@@ -493,6 +652,7 @@ components:
             properties:
               accountId: { type: string }
               accountName: { type: string }
+              accountSlug: { type: string, description: Unique and URL-safe, for the web UI's addresses }
               role: { type: string, enum: [admin, member] }
               actorId: { type: string, description: Present once the user has acted in the account. Not a credential. }
         csrfToken: { type: string, description: Cookie sessions only. Send as `X-Coho-Csrf` on writes. }
@@ -505,10 +665,11 @@ components:
           type: string
           description: |
             The BFF's own: `UNAUTHENTICATED`, `CSRF_REJECTED`, `NOT_FOUND`,
-            `ROUTE_NOT_FOUND`, `BAD_REQUEST`, `MALFORMED_BODY`,
+            `ACCOUNT_NOT_FOUND`, `ROUTE_NOT_FOUND`, `BAD_REQUEST`, `MALFORMED_BODY`,
             `LOGIN_STATE_INVALID`, `LOGIN_REFUSED`, `ACCOUNT_MISMATCH`,
-            `UPSTREAM_UNAVAILABLE`, `INTERNAL`. Anything else is relayed from
-            the tier that refused, and is that tier's catalog.
+            `SIGNUP_INCOMPLETE`, `TOKEN_NOT_ALLOWED`, `UPSTREAM_UNAVAILABLE`,
+            `INTERNAL`. Anything else is relayed from the tier that refused, and
+            is that tier's catalog.
         type: { type: string, format: uri }
         title: { type: string }
         status: { type: integer }

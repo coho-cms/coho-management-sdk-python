@@ -62,9 +62,31 @@ t = site.tags.create("v1.4.0", branch="v0.0.x", description="Q3 catalogue")
 t.at                                               # the frozen sequence
 t.warnings                                         # e.g. PENDING_FORWARD_PORT
 site.tags.create("v1.4.1", branch="v0.0.x", at=1234)
+site.tags.create("v1.4.2", branch="v0.0.x", validate=True)    # checks every entry first
 ```
 
 Only version branches; no delete.
+
+A tag does not validate by default: writes and merges do, so a version branch tip
+should already be valid. A type written directly on the branch does not re-validate
+its entries, though, so a confirmed destructive change can leave some invalid.
+`validate=True` checks every entry at the tag point (its fields against its type, its
+links against what its fields admit, and that its type is still on the ref) and
+refuses the whole tag if any fails. It costs the server a read of the whole branch.
+
+```python
+from coho_management_sdk import TagContentInvalid
+
+try:
+    site.tags.create("v1.4.0", branch="v0.0.x", validate=True)
+except TagContentInvalid as exc:
+    exc.entry_count                                # how many fail, in all
+    for x in exc.invalid_entries:                  # dicts, the first 100 by slug
+        x["id"], x["slug"], x.get("type"), x["errors"]     # errors: [{path, message}]
+```
+
+`type` is absent when the entry's type is not on the ref, which is itself the failure.
+Nothing is tagged, so the name stays free for the next attempt.
 
 ## Environments and promotion
 

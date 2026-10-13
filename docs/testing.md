@@ -32,6 +32,10 @@ What it encodes:
   `put` needs `If-Match` (428), a stale one is 412, and each write bumps the version.
 - A type `blogPost` with an ETag; `newType` does not exist yet.
 - Diff with one conflict and `mergeToken: tok-123`; merge refuses without resolutions.
+- Tags are cut at `42` with a `PENDING_FORWARD_PORT` warning. Set `bff.invalid_entries`
+  to items shaped like the problem's `invalidEntries`, and a tag cut with `validate`
+  is refused with `TAG_CONTENT_INVALID`: `entryCount` counts them all, and at most
+  `INVALID_ENTRIES_SHOWN` (100) are listed, in the order given.
 - `prod` promotion: set `bff.snapshot_not_ready_times = 2` to get `SNAPSHOT_NOT_READY`
   twice first; `expectedTarget: "wrong"` answers `ENVIRONMENT_MOVED`; target `v9.0.0`
   adds a `SKIPPED_TIER` warning. History for rollback.

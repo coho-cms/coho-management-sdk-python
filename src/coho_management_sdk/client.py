@@ -527,14 +527,27 @@ class TagsApi:
         return self._p.refs.list(kind="tag")
 
     def create(
-        self, name: str, *, branch: str, description: str | None = None, at: int | None = None
+        self,
+        name: str,
+        *,
+        branch: str,
+        description: str | None = None,
+        at: int | None = None,
+        validate: bool = False,
     ) -> m.Tag:
-        """Cut an immutable tag on a **version** branch. Does not merge, does not validate."""
+        """Cut an immutable tag on a **version** branch. Does not merge.
+
+        Does not validate either, unless ``validate=True``: then every entry at the tag
+        point is checked first, and if any fails, `TagContentInvalid` names them and
+        nothing is tagged. That costs the server a read of the whole branch.
+        """
         body: JSON = {"name": name, "ref": branch}
         if description:
             body["description"] = description
         if at is not None:
             body["at"] = at
+        if validate:
+            body["validate"] = True
         return m.Tag.from_dict(self._t.post(f"{self._p.path}/tags", body).body)
 
 

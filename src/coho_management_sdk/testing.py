@@ -36,6 +36,10 @@ USER = "55555555-5555-4555-8555-555555555555"
 # The one invitation token the fake recognizes.
 INVITATION_TOKEN = "invite-token-abc"
 
+# How many invalid entries a TAG_CONTENT_INVALID lists, as the server caps it.
+# `entryCount` has the total.
+INVALID_ENTRIES_SHOWN = 100
+
 ME = {
     "user": {"id": USER, "displayName": "Ada", "email": "ada@acme.example"},
     "accounts": [{"accountId": ACCOUNT, "accountName": "Acme", "role": "admin", "actorId": ACTOR}],
@@ -93,6 +97,9 @@ class FakeBff:
         # just finished setting up in a browser.
         self.tokens: set[str] = {"test-token"}
         self.snapshot_not_ready_times = 0
+        # What a tag cut with `validate` finds wrong at the tag point, each shaped like an
+        # item of the problem's `invalidEntries`. Empty means the content is valid.
+        self.invalid_entries: list[dict[str, Any]] = []
         self.entry_version = "v1"
         self.entry_fields: dict[str, Any] = {"title": {"en-US": "Hello"}, "rank": 1}
         self._install()
@@ -245,6 +252,17 @@ class FakeBff:
         def create_tag(request: Request) -> Response:
             self._record(request)
             body = request.get_json()
+            if body.get("validate") and self.invalid_entries:
+                count = len(self.invalid_entries)
+                fail = "entry fails" if count == 1 else "entries fail"
+                return problem(
+                    400,
+                    "TAG_CONTENT_INVALID",
+                    f"{count} {fail} validation at the tag point. "
+                    "Correct them on the branch and tag again; nothing was tagged.",
+                    entryCount=count,
+                    invalidEntries=self.invalid_entries[:INVALID_ENTRIES_SHOWN],
+                )
             return ok(
                 {
                     "name": body["name"],

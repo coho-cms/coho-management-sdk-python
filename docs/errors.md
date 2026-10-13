@@ -7,7 +7,7 @@ Every failure raises `coho_management_sdk.CohoError`:
 | `code` | the stable token: `VERSION_CONFLICT`, `PLAN_LIMIT`, … Branch on this |
 | `status` | the HTTP status. For logs; do not branch on it |
 | `title`, `detail` | the problem's text |
-| `context` | the problem's extra fields: `ref`, `slug`, `permission`, `errors`, `conflicts`, `limit`, `current`, `expectedVersion`, `currentVersion`, `state` |
+| `context` | the problem's extra fields: `ref`, `slug`, `permission`, `errors`, `conflicts`, `entryCount`, `invalidEntries`, `limit`, `current`, `expectedVersion`, `currentVersion`, `state` |
 | `problem` | the raw document |
 
 ```python
@@ -53,6 +53,7 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `MergeConflict` | `MERGE_CONFLICT` | `.conflicts` |
 | `MergeRefsMoved` | `MERGE_REFS_MOVED` | |
 | `CannotMerge` | `CANNOT_MERGE` | |
+| `TagContentInvalid` | `TAG_CONTENT_INVALID` | `.entry_count`, `.invalid_entries` (the first 100) |
 | `EnvironmentMoved` | `ENVIRONMENT_MOVED` | |
 | `SnapshotNotReady` | `SNAPSHOT_NOT_READY` | `context["state"]` |
 | `PlanLimit` | `PLAN_LIMIT` | 400 from authoring, 409 from auth — same class |

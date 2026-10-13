@@ -22,6 +22,13 @@ All notable changes to `coho-management-sdk`. The format follows
 - `AccountNotFound`, a `NotFound` for the BFF's `ACCOUNT_NOT_FOUND`: an account that does not
   exist, or one the caller is not in. `FakeBff` answers it for everything under
   `testing.GONE_ACCOUNT`.
+- `tags.create(..., validate=True)` asks the server to check every entry at the tag point
+  before cutting the tag, and sends `validate` only then. A failure raises
+  `TagContentInvalid` (`TAG_CONTENT_INVALID`): `entry_count` is how many entries fail,
+  `invalid_entries` the first 100 by slug with their errors, and nothing is tagged.
+  Needs a server that accepts `validate`.
+- `FakeBff.invalid_entries`: what a tag cut with `validate` finds wrong. Empty, the
+  default, means valid content.
 
 ### Changed
 

@@ -80,6 +80,20 @@ def test_merge_conflict_exposes_conflicts() -> None:
     assert err.conflicts[0]["paths"] == ["a.b"]
 
 
+def test_tag_content_invalid_counts_every_entry_and_lists_the_first() -> None:
+    r = _resp(
+        400,
+        '{"code":"TAG_CONTENT_INVALID","title":"t","status":400,"entryCount":250,'
+        '"invalidEntries":[{"id":"a","slug":"first","type":"blogPost",'
+        '"errors":[{"path":"/layout","message":"required"}]}]}',
+        "application/problem+json",
+    )
+    err = e.error_for_response(r)
+    assert isinstance(err, e.TagContentInvalid)
+    assert err.entry_count == 250  # the total, not how many are listed
+    assert err.invalid_entries[0]["errors"] == [{"path": "/layout", "message": "required"}]
+
+
 def test_invitation_states_share_a_class() -> None:
     for code in (
         "INVITATION_USED",

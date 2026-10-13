@@ -52,6 +52,33 @@ tags:
 paths:
 
   /v1/projects:
+    get:
+      tags: [Projects]
+      summary: The projects you can open, and your role on each
+      description: |
+        Every project in your account you hold a role on — all of them for an
+        account admin, who holds each as `owner` — by the same rules that decide
+        whether you can open one. Unpaged; an account's projects are bounded by
+        its plan.
+      operationId: listProjects
+      responses:
+        '200':
+          description: The projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, role]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        role: { type: string, example: owner }
     post:
       tags: [Projects]
       summary: Create and bootstrap a project
@@ -471,6 +498,11 @@ paths:
         against the target's schema (R5.5), so a tag has nothing left to check.
         Move content with `POST /merges` first; the two are independent verbs.
 
+        ⚠️ V1 has a gap: a type written directly on a version branch does not
+        re-validate its entries, so a confirmed destructive change can leave them
+        invalid. Set `validate` to check every entry at the tag point; a failure
+        is `TAG_CONTENT_INVALID`, naming the entries, and nothing is tagged.
+
         Only **version** branches may be tagged (D21). There is no `PUT` and no
         `DELETE`: a tag is immutable and undeletable (M4-3g), being at once a GC
         root, a snapshot cache key and the rollback record.
@@ -656,6 +688,45 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
 
+  /v1/projects/{project}/refs/{ref}/type-model:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Types]
+      summary: The type model, for code generators
+      description: |
+        A language-neutral description of the content types on this ref, which
+        each language's code generator reads (doc 38). Coho's rules are already
+        applied: hidden fields are gone, `presence` is decided, and every
+        reference target names a type in the same document.
+
+        `source.ref` is the branch or tag the types came from: an environment
+        reports its target rather than its own name. `source.immutable` is true
+        only for a tag.
+
+        The body is the model's file form, so a client writes it as received.
+        Send the `ETag` back as `If-None-Match` for a `304` when nothing has
+        changed. The full schema is `type-model.schema.json`, published in
+        `coho-sdk-spec`.
+      operationId: getTypeModel
+      parameters:
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+              description: The SHA-256 of the body, quoted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeModel' }
+        '304': { description: Not modified. The `If-None-Match` ETag is current. }
+        '404': { $ref: '#/components/responses/Problem' }
+
   /v1/projects/{project}/refs/{ref}/entries:
     parameters:
       - $ref: '#/components/parameters/project'
@@ -691,7 +762,11 @@ paths:
     post:
       tags: [Entries]
       summary: Create an entry
-      description: Requires `content:write`. The slug is stamped by the writer, never taken from the document.
+      description: >-
+        Requires `content:write`. The slug is stamped by the writer, never taken from the document.
+        With a caller-chosen `id` this is an ingestion: it creates the entry, or converges with
+        the one already there, so the same request can be sent again. Without an `id` the server
+        chooses one and every call creates an entry.
       operationId: createEntry
       requestBody:
         required: true
@@ -700,12 +775,64 @@ paths:
             schema: { $ref: '#/components/schemas/CreateEntryRequest' }
       responses:
         '201':
-          description: Created
+          description: Created. The entry is new to this ref.
           headers:
             ETag: { $ref: '#/components/headers/ETag' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EntryResponse' }
+        '200':
+          description: >-
+            An ingestion that converged with an entry already on this ref. Identical content writes
+            nothing; a changed body or slug writes a new version. The ETag names the current version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/backup:
+    parameters:
+      - { name: project, in: path, required: true, schema: { type: string } }
+      - { name: ref, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Backup]
+      summary: Export a ref's live content as a backup
+      description: >-
+        Requires `content:read`. The live types and entries of the ref, with their ids. Not the
+        history: branches, tags and environments are not included. Import it into another
+        project to restore the content with the same ids.
+      operationId: exportBackup
+      responses:
+        '200':
+          description: The backup document.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupDocument' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Backup]
+      summary: Import a backup into a ref
+      description: >-
+        Requires `content:write`. Every node is ingested by its id, in one transaction: types
+        first, then entries. Rerunning the same backup writes nothing. A type change that would
+        destroy data is refused without confirmation, and the whole import is refused with it.
+      operationId: importBackup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupDocument' }
+      responses:
+        '200':
+          description: Imported. Counts of what each node did.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupResult' }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -833,6 +960,54 @@ paths:
               schema: { $ref: '#/components/schemas/HistoryResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/tokens:
+    parameters:
+      - { name: project, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Project tokens]
+      summary: The project's tokens, revoked and expired ones included
+      description: |
+        Never the token or its hash. Kept after revocation, because a token's id is
+        what it signed content with (doc 29 PT-8). Needs `project:tokens`, which
+        only `owner` holds and no token can.
+      operationId: listProjectTokens
+      responses:
+        '200': { description: "`{tokens: [{id, label, role, state, createdBy, createdAt, expiresAt, lastUsedAt, revokedAt, revokedBy}]}`" }
+    post:
+      tags: [Project tokens]
+      summary: Create a project token for automation
+      description: |
+        One project, one role below `owner` (`viewer`, `author`, `maintainer`,
+        `release_manager`), and an expiry of 1–365 days, 90 by default. Send it as
+        `Authorization: Bearer coho_pt_…` to the BFF, which forwards it as
+        `X-Coho-Token`. Shown once.
+      operationId: createProjectToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label, role]
+              properties:
+                label: { type: string, maxLength: 100 }
+                role: { type: string, enum: [viewer, author, maintainer, release_manager] }
+                expiresInDays: { type: integer, minimum: 1, maximum: 365, default: 90 }
+      responses:
+        '201': { description: "`{token, projectToken}` — `token` appears here and never again" }
+
+  /v1/projects/{project}/tokens/{tokenId}:
+    parameters:
+      - { name: project, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: tokenId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Project tokens]
+      summary: Revoke a project token
+      description: Takes effect on the token's next request. Idempotent.
+      operationId: revokeProjectToken
+      responses:
+        '204': { description: Revoked }
 
   /v1/projects/{project}/delivery-keys:
     parameters:
@@ -1098,6 +1273,25 @@ components:
         depth: { type: integer }
         maxDepth: { type: integer }
         entryCount: { type: integer }
+        invalidEntries:
+          type: array
+          description: For `TAG_CONTENT_INVALID`, the failing entries by slug, at most 100. `entryCount` has the total.
+          items:
+            type: object
+            required: [id, slug, errors]
+            properties:
+              id: { type: string, format: uuid }
+              slug: { type: string }
+              type:
+                type: string
+                description: The entry's content type. Absent when that type is not on the ref, which is the failure.
+              errors:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    path: { type: string }
+                    message: { type: string }
         expectedVersion: { type: string }
         currentVersion: { type: string }
         conflicts:
@@ -1490,6 +1684,16 @@ components:
             content and would not be immutable; below the tagged branch's own
             creation seq it would resolve to the parent's state, containing
             nothing that branch ever wrote.
+        validate:
+          type: boolean
+          default: false
+          description: |
+            Refuse the tag unless every entry at the tag point is valid: it
+            matches its type, its links resolve to types its fields admit, and
+            its type is on the ref (doc 38, IR-7). Off by default (M4-3c). A
+            failure is `TAG_CONTENT_INVALID`, with `entryCount` and the first
+            100 failures in `invalidEntries`, and nothing is tagged. Costs a read
+            of the whole ref.
 
     TagResponse:
       type: object
@@ -1562,6 +1766,32 @@ components:
           type: array
           items: { $ref: '#/components/schemas/TypeResponse' }
 
+    TypeModel:
+      type: object
+      required: [irVersion, source, types]
+      description: |
+        The type model IR (doc 38). Summarised here; the normative JSON Schema is
+        `core-schema/src/main/resources/type-model/type-model.schema.json`,
+        published in `coho-sdk-spec`. Readers ignore keys they do not know and
+        refuse an unknown major `irVersion`.
+      properties:
+        irVersion: { type: string, examples: ['1.0'] }
+        source:
+          type: object
+          required: [project, ref, immutable, schemaHash]
+          properties:
+            project: { type: string, format: uuid }
+            ref: { type: string }
+            immutable: { type: boolean }
+            schemaHash: { type: string }
+        types:
+          type: object
+          description: Content types keyed by slug.
+          additionalProperties: { type: object }
+        warnings:
+          type: array
+          items: { type: object }
+
     PutTypeRequest:
       type: object
       required: [definition]
@@ -1573,6 +1803,35 @@ components:
           type: boolean
           description: Phase two of R1.3. Without it, a destructive change is refused.
 
+    BackupDocument:
+      type: object
+      required: [nodes]
+      properties:
+        format: { type: string, enum: [coho-backup] }
+        version: { type: integer, enum: [1] }
+        ref: { type: string, description: The ref the backup was taken from. Ignored on import. }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/BackupNode' }
+
+    BackupNode:
+      type: object
+      required: [id, kind, slug, body]
+      properties:
+        id: { type: string, format: uuid, description: The project's id for this node. Kept on import. }
+        kind: { type: string, enum: [content_type, component_type, entry] }
+        type: { type: string, description: The content type's slug. Entries only. }
+        slug: { type: string }
+        body: { type: object }
+
+    BackupResult:
+      type: object
+      required: [created, updated, unchanged]
+      properties:
+        created: { type: integer }
+        updated: { type: integer }
+        unchanged: { type: integer }
+
     CreateEntryRequest:
       type: object
       required: [type, slug, fields]
@@ -1580,6 +1839,13 @@ components:
         type: { type: string, description: Content type slug. }
         slug: { type: string, description: Stamped into the document as `_slug` by the writer. }
         fields: { type: object }
+        id:
+          type: string
+          format: uuid
+          description: >-
+            Optional. A caller-chosen entry id, lowercase canonical form, not the nil UUID. Ids are
+            unique within a project. Naming a content type, or an entry of another type, is refused
+            with ID_TAKEN.
 
     PutEntryRequest:
       type: object
@@ -1752,6 +2018,7 @@ components:
             - deleted_and_modified
             - slug_collision
             - internal_name_collision
+            - identity_collision
             - unmatched
             - not_applicable
         paths:

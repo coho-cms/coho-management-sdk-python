@@ -25,6 +25,7 @@ _CONTEXT_FIELDS = (
     "depth",
     "maxDepth",
     "entryCount",
+    "invalidEntries",
     "expectedVersion",
     "currentVersion",
     "conflicts",
@@ -216,6 +217,26 @@ class CannotMerge(CohoError):
     code = "CANNOT_MERGE"
 
 
+class TagContentInvalid(CohoError):
+    """A tag cut with ``validate=True`` found invalid entries, so nothing was tagged.
+
+    ``invalid_entries`` lists the first 100 by slug, each a dict with ``id``, ``slug``,
+    ``type`` (absent when the type is not on the ref, which is the failure) and
+    ``errors``; ``entry_count`` is how many fail in all.
+    """
+
+    code = "TAG_CONTENT_INVALID"
+
+    @property
+    def entry_count(self) -> int:
+        count = self.context.get("entryCount")
+        return count if isinstance(count, int) else len(self.invalid_entries)
+
+    @property
+    def invalid_entries(self) -> list[dict[str, Any]]:
+        return list(self.context.get("invalidEntries") or [])
+
+
 class EnvironmentMoved(CohoError):
     """``expectedTarget`` did not match — somebody else repointed the environment."""
 
@@ -313,6 +334,7 @@ _BY_CODE: dict[str, type[CohoError]] = {
         MergeConflict,
         MergeRefsMoved,
         CannotMerge,
+        TagContentInvalid,
         EnvironmentMoved,
         SnapshotNotReady,
         PlanLimit,
