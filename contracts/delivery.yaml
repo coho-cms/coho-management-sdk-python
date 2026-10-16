@@ -45,11 +45,12 @@ info:
     | Serves refs resolving to | a tag | a branch tip |
     | SLO | N1 — p99 < 80 ms | N2 — p99 < 150 ms |
     | Posture | public, CDN-frontable | **private, BFF-fronted** |
+    | Credential | a delivery key, unless the environment is public | what the BFF forwards: a person's actor, or a project token |
 
     ⚠️ **Live previews inherit the private posture.** A `live`-tier environment is
     served by the overlay implementation, which sits behind the authoring boundary
-    where `X-Coho-Actor` is unverified by design and network position is the
-    authentication control. A "public preview URL pointed at a feature branch"
+    where `X-Coho-Actor` is unverified by design: network position vouches for the
+    BFF, and the BFF for who is asking. A "public preview URL pointed at a feature branch"
     therefore routes through the BFF, **not** through the CDN edge. Integrators
     building the per-client-preview case in doc 06 §1 need to know this before
     they design around it.
@@ -90,15 +91,27 @@ info:
     | No key presented | `401 KEY_REQUIRED` | The same answer whatever project id was asked for, so an unauthenticated caller learns nothing by trying ids |
     | A key that does not grant this project | `404 PROJECT_NOT_FOUND` | Indistinguishable from a project that never existed: one customer's key must not confirm another's |
 
-    The live implementation takes no key. It sits behind the authoring boundary,
-    where network position is the control.
-
     ⚠️ **A keyed response is `private`, and a shared cache must not store it**
     (doc 20 DT-7). Caching one under a URL that carries no credential would serve
     it to whoever asks for that URL, and would turn revocation from seconds into
     that cache's TTL. An edge that verifies the key itself may cache it; nothing
     else may. Responses on a **public** environment are `public` and cache
     normally.
+
+    ## ⚠️ Every read is authorized, in the live implementation (doc 38 IR-9)
+
+    The live implementation takes no key. It takes what the BFF forwards: a
+    person's actor for the account in the BFF's path, or a project token (doc 29),
+    which the BFF passes on unchecked. Each read needs `content:read` on the
+    project in the path, exactly as a read through the authoring API does: a role
+    there, or a token for it, under that account. A preview client holds a project
+    token, as a site holds a delivery key.
+
+    | Refusal | Status | Why that one |
+    |---|---|---|
+    | No credential, something that is not one, or a token that has expired or been revoked | `401 UNAUTHENTICATED` | The authoring API's answer to the same check. Expiry and revocation are told only to a token this project issued (doc 29 PT-10), so they confirm nothing its holder did not know |
+    | A credential that does not reach this project | `404 PROJECT_NOT_FOUND` | Byte for byte the snapshot implementation's answer: a made-up token, another project's, another account's path, or a person with no role there |
+    | A suspended or closed account, or a suspended person | `403 ACCOUNT_SUSPENDED`, `ACCOUNT_CLOSED`, `USER_SUSPENDED` | The authoring API's codes. Previews stop with editing, while the snapshot implementation never refuses for this: a suspended account's site keeps serving (UL-11) |
 
     ## Reference resolution is a bounded walk (D29)
 
@@ -199,6 +212,7 @@ paths:
               schema: { $ref: '#/components/schemas/EntryListResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '500': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
@@ -230,6 +244,7 @@ paths:
               schema: { $ref: '#/components/schemas/EntryGraph' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '500': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
@@ -265,6 +280,7 @@ paths:
               schema: { $ref: '#/components/schemas/EntryGraph' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '500': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
@@ -298,6 +314,7 @@ paths:
               schema: { $ref: '#/components/schemas/EntryGraph' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '500': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
@@ -488,17 +505,22 @@ components:
           description: |
             The stable identifier clients branch on. Status is deliberately
             coarse, so a client switching on status is switching on almost nothing.
-          enum: [REF_NOT_FOUND, ENTRY_NOT_FOUND, INVALID_QUERY, RESOLUTION_LIMIT, ARTIFACT_UNREADABLE, KEY_REQUIRED, PROJECT_NOT_FOUND, POOL_UNAVAILABLE]
+          enum: [REF_NOT_FOUND, ENTRY_NOT_FOUND, INVALID_QUERY, RESOLUTION_LIMIT, ARTIFACT_UNREADABLE, KEY_REQUIRED, PROJECT_NOT_FOUND, POOL_UNAVAILABLE, UNAUTHENTICATED, ACCOUNT_SUSPENDED, ACCOUNT_CLOSED, USER_SUSPENDED]
           # ARTIFACT_UNREADABLE (500) is served only by the snapshot implementation,
           # when the artifact a ref resolves to is in a format this build cannot read
           # (doc 15 AF-3). The live implementation reads no artifact, so it cannot
           # produce it. The contract suite does not yet test it on either side.
           #
-          # KEY_REQUIRED (401) and PROJECT_NOT_FOUND (404) are served only by the
-          # snapshot implementation, which takes a delivery key (doc 20 DT-3): the first
-          # when none is presented, the second when the key does not grant this
-          # project, the same answer as a project that does not exist. The live
-          # implementation takes no key, so it produces neither.
+          # KEY_REQUIRED (401) is served only by the snapshot implementation, which
+          # takes a delivery key (doc 20 DT-3), when none is presented. PROJECT_NOT_FOUND
+          # (404) is served by both, byte-identically, when the credential presented
+          # does not reach the project: the same answer as a project that does not exist.
+          #
+          # UNAUTHENTICATED (401), ACCOUNT_SUSPENDED, ACCOUNT_CLOSED and USER_SUSPENDED
+          # (403) are served only by the live implementation, which authorizes a read as
+          # the authoring API does and refuses with that API's codes for the same checks
+          # (doc 38 IR-9). The snapshot implementation keeps serving a suspended
+          # account's site (UL-11), so it produces none of the 403s.
           #
           # POOL_UNAVAILABLE (503) is served by the router in front of the snapshot
           # implementation (doc 31), when a project's pool has no instance configured

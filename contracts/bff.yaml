@@ -545,8 +545,13 @@ paths:
       description: |
         Authoring's `/v1/live/{project}/{ref}/...` — the live implementation of
         delivery.yaml, which doc 10 §6.3 says must be BFF-fronted. `{path}` is
-        `entries` or `entries/{id}`, with delivery.yaml's query parameters.
+        any of delivery.yaml's reads (`entries`, `entries/{id}`,
+        `entries-by-slug/{slug}`, `entries-by-id`), with its query parameters.
         `Cache-Control: no-cache` is relayed as authoring sends it.
+
+        As the caller's actor, or a project token with the account; the live
+        routes check either one as any authoring read does, and refuse in
+        delivery.yaml's shape (doc 38 IR-9).
       operationId: preview
       parameters:
         - { $ref: '#/components/parameters/account' }
@@ -555,6 +560,8 @@ paths:
         - { name: path, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: delivery.yaml's response }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
 
 components:
