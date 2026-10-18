@@ -47,6 +47,7 @@ tags:
   - name: Promotion
   - name: Types
   - name: Entries
+  - name: Assets
   - name: Diff and merge
 
 paths:
@@ -961,6 +962,185 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
 
+  /v1/projects/{project}/refs/{ref}/assets:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Assets]
+      summary: The assets on this ref, in slug order
+      description: |
+        Assets are nodes: they branch, merge and promote like entries, while the
+        bytes they point at, addressed by sha256, do not branch at all (doc 40 §2).
+        ⚠️ Every asset is public to anyone holding its URL (doc 40 §7.0).
+      operationId: listAssets
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/assets/uploads:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    post:
+      tags: [Assets]
+      summary: Start an upload, and get a presigned PUT for the bytes
+      description: |
+        Requires `content:write` on a writable branch. The bytes go straight to
+        object storage on the returned URL, never through this API (doc 40 §4).
+        Send the PUT with exactly the returned headers: they are signed, and the
+        store refuses bytes whose length or sha256 differ from this request.
+
+        `upload` is absent when the project already holds these bytes. Complete
+        the upload straight away; there is nothing to send.
+
+        Refusals: `ASSET_TOO_LARGE` (with `limit` and `current`), `BAD_REQUEST`
+        for a malformed hash or filename, and `503 ASSETS_UNAVAILABLE` where the
+        deployment has no asset store.
+      operationId: beginAssetUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BeginAssetUploadRequest' }
+      responses:
+        '201':
+          description: The upload, and where to send its bytes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetUploadResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/assets/uploads/{upload}/complete:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - name: upload
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Assets]
+      summary: Finish an upload, and write the asset
+      description: |
+        Checks what arrived, says what it is from the bytes themselves (never
+        from the filename or the claimed type), publishes it under its content
+        address and writes the asset on this branch. The ref must be the one the
+        upload was started on.
+
+        Idempotent: completing an upload again answers `200` with the asset the
+        first completion wrote, whatever this body says.
+
+        Refusals: `ASSET_UPLOAD_INCOMPLETE` (nothing PUT yet, or other bytes),
+        `ASSET_UPLOAD_EXPIRED` (after an hour; start again),
+        `ASSET_TYPE_NOT_ALLOWED` (images, PDF, audio and video only; never
+        HTML), `SLUG_CONFLICT`, `INVALID_SLUG`.
+      operationId: completeAssetUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteAssetUploadRequest' }
+      responses:
+        '201':
+          description: The asset this request wrote
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetResponse' }
+        '200':
+          description: The asset an earlier completion of this upload wrote
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/assets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Assets]
+      summary: One asset as resolved on this ref
+      operationId: getAsset
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Assets]
+      summary: Replace an asset's metadata
+      description: |
+        Requires `content:write` and `If-Match`. A whole replacement of `title`,
+        `alt`, `focalPoint` and `tags`; an omitted field is cleared. The file is
+        not editable here: it is only ever what was uploaded.
+      operationId: putAsset
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAssetRequest' }
+      responses:
+        '200':
+          description: Updated
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Assets]
+      summary: Tombstone an asset
+      description: |
+        A tombstone on this branch, like an entry's. ⚠️ The bytes stay, and the
+        asset's URL keeps working: history and released tags still point at it
+        (doc 40 §7.0).
+      operationId: deleteAsset
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      responses:
+        '204':
+          description: Deleted
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+
   /v1/projects/{project}/tokens:
     parameters:
       - { name: project, in: path, required: true, schema: { type: string, format: uuid } }
@@ -981,7 +1161,8 @@ paths:
         One project, one role below `owner` (`viewer`, `author`, `maintainer`,
         `release_manager`), and an expiry of 1–365 days, 90 by default. Send it as
         `Authorization: Bearer coho_pt_…` to the BFF, which forwards it as
-        `X-Coho-Token`. Shown once.
+        `X-Coho-Token`. Shown once. It names its project (PT-5), so `GET /v1/token`
+        can say what it is for.
       operationId: createProjectToken
       requestBody:
         required: true
@@ -996,6 +1177,48 @@ paths:
                 expiresInDays: { type: integer, minimum: 1, maximum: 365, default: 90 }
       responses:
         '201': { description: "`{token, projectToken}` — `token` appears here and never again" }
+
+  /v1/token:
+    get:
+      tags: [Project tokens]
+      summary: The project token presented, describing itself
+      description: |
+        Which account and project the token in `X-Coho-Token` is for, and its own
+        grant, with no project in the path (doc 29 PT-12), so a tool given only
+        Coho's URL and a token can set itself up. The token names its project
+        (PT-5), and is looked up on that project's connection like any other.
+
+        Token only: `X-Coho-Actor` is refused. Every refusal is `401
+        UNAUTHENTICATED` (unknown, revoked, expired, or a token from before tokens
+        named their project), except a suspended or closed account's `403`.
+      operationId: describeToken
+      responses:
+        '200':
+          description: The token's account, project and grant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account, project, token]
+                properties:
+                  account:
+                    type: object
+                    required: [id]
+                    properties: { id: { type: string, format: uuid }, name: { type: string, nullable: true } }
+                  project:
+                    type: object
+                    required: [id, name]
+                    properties: { id: { type: string, format: uuid }, name: { type: string } }
+                  token:
+                    type: object
+                    required: [id, label, role, expiresAt]
+                    properties:
+                      id: { type: string, format: uuid }
+                      label: { type: string }
+                      role: { type: string, enum: [viewer, author, maintainer, release_manager] }
+                      expiresAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}/tokens/{tokenId}:
     parameters:
@@ -1885,6 +2108,123 @@ components:
           description: How many came back in **this page**, not in the collection.
         page: { $ref: '#/components/schemas/PageDto' }
 
+    BeginAssetUploadRequest:
+      type: object
+      required: [sha256, byteSize, filename]
+      properties:
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: The file's SHA-256, lower-case hex. Signed into the upload URL.
+        byteSize:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1073741824
+          description: Exact. Signed into the upload URL.
+        filename: { type: string, minLength: 1, maxLength: 255 }
+        contentType:
+          type: string
+          description: What the client thinks the file is. A hint; the bytes decide.
+
+    AssetUploadResponse:
+      type: object
+      required: [id, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+        upload: { $ref: '#/components/schemas/PresignedPut' }
+
+    PresignedPut:
+      type: object
+      required: [url, method, headers, expiresAt]
+      properties:
+        url: { type: string, format: uri }
+        method: { type: string, enum: [PUT] }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: Send every one, exactly. They are part of the signature.
+        expiresAt: { type: string, format: date-time }
+
+    FocalPoint:
+      type: object
+      required: [x, y]
+      properties:
+        x: { type: number, minimum: 0, maximum: 1 }
+        y: { type: number, minimum: 0, maximum: 1 }
+
+    CompleteAssetUploadRequest:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          description: kebab-case, unique on the branch among every node's slugs.
+        title: { type: string }
+        alt: { type: string }
+        focalPoint: { $ref: '#/components/schemas/FocalPoint' }
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+
+    PutAssetRequest:
+      type: object
+      properties:
+        title: { type: string }
+        alt: { type: string }
+        focalPoint: { $ref: '#/components/schemas/FocalPoint' }
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+
+    AssetFile:
+      type: object
+      required: [sha256, byteSize, mediaType, filename]
+      properties:
+        sha256: { type: string }
+        byteSize: { type: integer, format: int64 }
+        mediaType:
+          type: string
+          description: Sniffed from the bytes at completion.
+        width: { type: integer, description: Raster images only. }
+        height: { type: integer, description: Raster images only. }
+        filename: { type: string }
+
+    AssetResponse:
+      type: object
+      required: [id, slug, version, file, tags]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        version: { type: string, format: uuid }
+        file: { $ref: '#/components/schemas/AssetFile' }
+        title: { type: string }
+        alt: { type: string }
+        focalPoint: { $ref: '#/components/schemas/FocalPoint' }
+        tags:
+          type: array
+          items: { type: string }
+        url:
+          type: string
+          format: uri
+          description: The original, from the asset CDN. ⚠️ Public to anyone holding it.
+        imageUrl:
+          type: string
+          format: uri
+          description: |
+            Raster images only: the transform base. Append `?w=`, `h`, `fit`,
+            `fx`, `fy`, `fm`, `q`, `bg` (doc 40 §6.1).
+
+    AssetListResponse:
+      type: object
+      required: [assets, page]
+      properties:
+        assets:
+          type: array
+          items: { $ref: '#/components/schemas/AssetResponse' }
+        page: { $ref: '#/components/schemas/PageDto' }
+
     ReferencesResponse:
       type: object
       required: [id, ref, incoming, total]
@@ -2042,7 +2382,7 @@ components:
             resolution unable to be stale in its *value*, and it is the only form
             that can express **absence** — taking the side that deleted a key.
         value:
-          description: Required for `take: value`, and only valid with a `path`.
+          description: 'Required for `take: value`, and only valid with a `path`.'
 
     MergeRequest:
       type: object
