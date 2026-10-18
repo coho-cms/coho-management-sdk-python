@@ -110,8 +110,12 @@ class FakeBff:
         self.blobs: dict[str, bytes] = {}
         self.uploads: dict[str, dict[str, Any]] = {}
         self.assets: dict[str, dict[str, Any]] = {}
+        # Whether the caller is an admin of ACCOUNT, as the account's usage report asks.
+        # False stands for a member, refused as authoring refuses one.
+        self.account_admin = True
         self._install()
         self._install_assets()
+        self._install_usage()
 
     @property
     def url(self) -> str:
@@ -882,6 +886,52 @@ class FakeBff:
         s.expect_request(f"{r}/assets", method="GET").respond_with_handler(list_assets)
         s.expect_request(re.compile(rf"^{re.escape(r)}/assets/{uid}$")).respond_with_handler(one)
 
+    def _install_usage(self) -> None:
+        """Usage reports (doc 41 §7.1): `USAGE` for the project, summed for the account."""
+        s = self.server
+        a = f"/api/v1/accounts/{ACCOUNT}"
+
+        def query_problem(request: Request) -> Response | None:
+            if request.args.get("grain", "hour") not in ("hour", "day"):
+                return problem(400, "USAGE_QUERY_INVALID", "grain must be hour or day")
+            return None
+
+        def report_for(request: Request) -> dict[str, Any]:
+            report = usage_report(request.args.get("grain", "hour"))
+            if request.args.get("meter"):
+                names = request.args["meter"].split(",")
+                report["meters"] = [m for m in report["meters"] if m["meter"] in names]
+            return report
+
+        def project_usage(request: Request) -> Response:
+            self._record(request)
+            return query_problem(request) or ok(report_for(request))
+
+        def account_usage(request: Request) -> Response:
+            self._record(request)
+            if not self.account_admin:
+                return problem(
+                    403,
+                    "FORBIDDEN",
+                    "This action requires the 'account:admin' permission",
+                    permission="account:admin",
+                )
+            bad = query_problem(request)
+            if bad:
+                return bad
+            report = report_for(request)
+            totals = {m["meter"]: _total(m) for m in report["meters"]}
+            for m in report["meters"]:
+                values = [sum(col) for col in zip(*(x["values"] for x in m["series"]), strict=True)]
+                m["series"] = [{"dims": {}, "values": values, "total": _total(m, values)}]
+            report["projects"] = [{"id": PROJECT, "name": "Marketing site", "totals": totals}]
+            return ok(report)
+
+        s.expect_request(f"{a}/projects/usage", method="GET").respond_with_handler(account_usage)
+        s.expect_request(f"{a}/projects/{PROJECT}/usage", method="GET").respond_with_handler(
+            project_usage
+        )
+
     def _asset(
         self, asset_id: str, slug: str, version: str, file: dict[str, Any], details: dict[str, Any]
     ) -> dict[str, Any]:
@@ -910,6 +960,107 @@ class FakeBff:
             "version": f"e{i}",
             "fields": {"title": {"en-US": f"Post {i}"}, "rank": i},
         }
+
+
+# A project's usage over three periods, in authoring's shape: delivery by key and outcome,
+# management by actor kind and class, and the stocks. key-1's client asks for each URL
+# eleven times a period (330 answered over 30 distinct URLs); keyless reads of prod, once.
+USAGE_METERS: list[tuple[str, str, str, list[tuple[dict[str, str], list[int]]]]] = [
+    (
+        "delivery.requests",
+        "flow",
+        "requests",
+        [
+            ({"key": "key-1", "access": "key", "outcome": "ok"}, [100, 120, 80]),
+            ({"key": "key-1", "access": "key", "outcome": "not_modified"}, [10, 10, 10]),
+            ({"key": "none", "access": "public", "outcome": "ok"}, [5, 0, 5]),
+            ({"key": "key-2", "access": "key", "outcome": "refused"}, [0, 2, 0]),
+        ],
+    ),
+    (
+        "delivery.bytes",
+        "flow",
+        "bytes",
+        [
+            ({"key": "key-1", "access": "key"}, [400_000, 480_000, 320_000]),
+            ({"key": "none", "access": "public"}, [20_000, 0, 20_000]),
+        ],
+    ),
+    ("delivery.billable_bytes", "flow", "bytes", [({}, [1_638_400, 1_966_080, 1_310_720])]),
+    (
+        "delivery.distinct_urls",
+        "distinct",
+        "urls",
+        [
+            ({"key": "key-1"}, [10, 12, 8]),
+            ({"key": "none"}, [5, 0, 5]),
+        ],
+    ),
+    ("delivery.peak_rpm", "peak", "requests/minute", [({}, [40, 55, 30])]),
+    (
+        "management.requests",
+        "flow",
+        "requests",
+        [
+            ({"actor": "person", "class": "read", "outcome": "ok"}, [3, 4, 5]),
+            ({"actor": "person", "class": "write", "outcome": "ok"}, [1, 0, 1]),
+            ({"actor": "token", "class": "read", "outcome": "ok"}, [20, 20, 20]),
+            ({"actor": "token", "class": "release", "outcome": "ok"}, [0, 1, 0]),
+        ],
+    ),
+    ("authoring.versions", "flow", "versions", [({}, [1, 1, 0])]),
+    ("authoring.noop_versions", "flow", "versions", [({}, [0, 1, 0])]),
+    ("preview.requests", "flow", "requests", [({}, [2, 0, 0])]),
+    ("content.records", "stock", "entries", [({}, [40, 41, 41])]),
+    ("content.published_entries", "stock", "entries", [({}, [38, 38, 39])]),
+    ("content.published_bytes", "stock", "bytes", [({}, [150_000, 150_000, 152_000])]),
+    ("content.index_bytes", "stock", "bytes", [({}, [64_000, 64_000, 65_000])]),
+    ("history.versions", "stock", "versions", [({}, [300, 301, 301])]),
+    ("history.bytes", "stock", "bytes", [({}, [2_000_000, 2_010_000, 2_010_000])]),
+    ("tokens.active", "stock", "tokens", [({}, [1, 1, 1])]),
+    ("assets.stored_count", "stock", "blobs", [({}, [12, 12, 13])]),
+    ("assets.stored_bytes", "stock", "bytes", [({}, [5_000_000, 5_000_000, 6_000_000])]),
+    (
+        "assets.requests",
+        "flow",
+        "requests",
+        [
+            ({"kind": "image", "cache": "hit"}, [50, 60, 40]),
+            ({"kind": "image", "cache": "miss"}, [2, 1, 0]),
+        ],
+    ),
+    ("assets.egress_bytes", "flow", "bytes", [({}, [3_000_000, 3_500_000, 2_500_000])]),
+]
+
+
+def usage_report(grain: str = "hour") -> dict[str, Any]:
+    """`USAGE_METERS` as `GET …/usage` answers: three hours of 18 Oct 2026, or three days."""
+    if grain == "day":
+        buckets = [f"2026-10-{d}T00:00:00Z" for d in (16, 17, 18)]
+        start, end = buckets[0], "2026-10-19T00:00:00Z"
+    else:
+        buckets = [f"2026-10-18T{h}:00:00Z" for h in (10, 11, 12)]
+        start, end = buckets[0], "2026-10-18T13:00:00Z"
+    meters = []
+    for name, kind, unit, series in USAGE_METERS:
+        meter: dict[str, Any] = {"meter": name, "kind": kind, "unit": unit}
+        meter["series"] = [
+            {"dims": dims, "values": values, "total": _total(meter, values)}
+            for dims, values in series
+        ]
+        meters.append(meter)
+    return {"from": start, "to": end, "grain": grain, "buckets": buckets, "meters": meters}
+
+
+def _total(meter: dict[str, Any], values: list[int] | None = None) -> int:
+    """A series' total as authoring forms it; with no ``values``, the meter's summed series."""
+    if values is None:
+        values = [sum(col) for col in zip(*(s["values"] for s in meter["series"]), strict=True)]
+    if meter["kind"] == "flow":
+        return sum(values)
+    if meter["kind"] == "stock":
+        return values[-1] if values else 0
+    return max(values, default=0)
 
 
 def _s3_error(status: int, code: str, message: str) -> Response:

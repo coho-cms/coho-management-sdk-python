@@ -41,6 +41,10 @@ What it encodes:
   adds a `SKIPPED_TIER` warning. History for rollback.
 - Roles, delivery keys (`coho_dk_SECRET`), invitations (`secret-invitation-token`),
   `LAST_ADMIN` on demoting the only admin, entitlements with an absent limit.
+- Usage: `USAGE_METERS` over three hours (or three days with `grain=day`), from
+  `usage_report()`: `key-1` asks for each URL eleven times a period, keyless reads once.
+  `meter=` narrows them. The account's report sums them; set `bff.account_admin = False` for a member's
+  `FORBIDDEN`. A grain other than `hour` or `day` is `USAGE_QUERY_INVALID`.
 - Export: a branch streams three NDJSON lines with `X-Coho-Export-Seq: 42`; a tag
   answers `302` to a blob on the same server.
 - Assets on `dev`, with a fake object store on the same server. An upload is offered a

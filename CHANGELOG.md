@@ -15,6 +15,15 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- Usage reports (coho-data doc 41): `Project.usage()` for anyone who can read the
+  project, project tokens included, and `Account.usage()` for the account's admins,
+  every project summed with each project's totals. Both take `grain`, `start`, `end`
+  and `meters`. `UsageReport` totals a meter the way its kind says (`total`,
+  `per_bucket`, `totals_by`), and `delivery_by_key()` gives each key's requests, 304s,
+  refusals, bytes and requests per distinct URL: the client that is not caching. Models
+  `UsageReport`, `AccountUsageReport`, `UsageMeter`, `UsageSeries`,
+  `ProjectUsageTotals`, `KeyUsage`. `FakeBff` answers both routes from
+  `testing.usage_report()`. Needs a server with the usage routes (coho-data 70ae1a4).
 - Assets: `ref.assets` (`AssetsApi`). `upload(path, slug=…)` hashes a file, starts an
   upload, PUTs the bytes straight to object storage on the presigned URL (skipped when
   the project already holds them) and completes it. Also `list`, `iterate`, `get`,

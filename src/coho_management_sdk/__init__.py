@@ -47,6 +47,7 @@ from .errors import (
     VersionConflict,
 )
 from .models import (
+    AccountUsageReport,
     Asset,
     AssetFile,
     AssetPage,
@@ -62,16 +63,21 @@ from .models import (
     Invitation,
     IssuedDeliveryKey,
     IssuedInvitation,
+    KeyUsage,
     Me,
     Member,
     MergeResult,
     PresignedPut,
     ProjectInfo,
     ProjectRole,
+    ProjectUsageTotals,
     RefInfo,
     Resolution,
     Tag,
     Tier,
+    UsageMeter,
+    UsageReport,
+    UsageSeries,
 )
 from .profiles import Config, Context, Profile
 
@@ -138,4 +144,10 @@ __all__ = [
     "Resolution",
     "Tag",
     "Tier",
+    "UsageReport",
+    "AccountUsageReport",
+    "UsageMeter",
+    "UsageSeries",
+    "ProjectUsageTotals",
+    "KeyUsage",
 ]

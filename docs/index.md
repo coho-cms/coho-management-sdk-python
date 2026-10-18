@@ -24,6 +24,7 @@ dev.entries.put(post)                        # sends If-Match from post.etag
 | [Accounts and members](accounts.md) | `me`, members, invitations, entitlements, users |
 | [Content](content.md) | types, entries, ETags, pagination, history, references |
 | [Assets](assets.md) | uploading files, image URLs, editing and deleting assets |
+| [Usage](usage.md) | a project's and the account's metered usage, and totalling it |
 | [Branches and releases](releases.md) | branches, diff, merge, tags, environments, promote, rollback, export, preview |
 | [Errors](errors.md) | `CohoError`, the subclasses, branching on `code` |
 | [Testing](testing.md) | `coho_management_sdk.testing.FakeBff` for your own tests |

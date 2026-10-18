@@ -18,6 +18,7 @@ import mimetypes
 import os
 import time
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 from urllib.parse import quote, urlencode
@@ -205,6 +206,23 @@ class Coho:
 PROJECT_TOKEN_PREFIX = "coho_pt_"
 
 
+def _usage_query(
+    grain: str | None,
+    start: str | datetime | None,
+    end: str | datetime | None,
+    meters: builtins.list[str] | None,
+) -> dict[str, str | None]:
+    def instant(value: str | datetime | None) -> str | None:
+        return value.isoformat() if isinstance(value, datetime) else value
+
+    return {
+        "grain": grain,
+        "from": instant(start),
+        "to": instant(end),
+        "meter": ",".join(meters) if meters else None,
+    }
+
+
 def _looks_like_id(value: str) -> bool:
     return len(value) == 36 and value.count("-") == 4
 
@@ -272,6 +290,25 @@ class Account:
 
     def project(self, project_id: str) -> Project:
         return Project(self, project_id)
+
+    def usage(
+        self,
+        *,
+        grain: str | None = None,
+        start: str | datetime | None = None,
+        end: str | datetime | None = None,
+        meters: builtins.list[str] | None = None,
+    ) -> m.AccountUsageReport:
+        """Every project's usage summed, and each project's totals (admin).
+
+        A member is refused ``403 FORBIDDEN``, and a project token ``TOKEN_NOT_ALLOWED``,
+        since the report names projects they may hold no role on. Arguments as
+        `Project.usage`.
+        """
+        body = self._t.get(
+            f"{self.path}/projects/usage", params=_usage_query(grain, start, end, meters)
+        ).body
+        return m.AccountUsageReport.from_dict(body)
 
 
 class MembersApi:
@@ -472,6 +509,28 @@ class Project:
 
     def preview(self, ref: str) -> Preview:
         return Preview(self, ref)
+
+    # -- usage -----------------------------------------------------------------
+
+    def usage(
+        self,
+        *,
+        grain: str | None = None,
+        start: str | datetime | None = None,
+        end: str | datetime | None = None,
+        meters: builtins.list[str] | None = None,
+    ) -> m.UsageReport:
+        """The project's usage (coho-data doc 41): anyone who can read the project, tokens too.
+
+        ``grain`` is ``hour`` (the default: the last day) or ``day`` (the last 30 days).
+        ``start`` is rounded down and ``end`` up to whole periods; hourly rows are kept 90
+        days. ``meters`` narrows the report to those names. A range the stored data cannot
+        answer is refused ``400 USAGE_QUERY_INVALID``.
+        """
+        body = self._t.get(
+            f"{self.path}/usage", params=_usage_query(grain, start, end, meters)
+        ).body
+        return m.UsageReport.from_dict(body)
 
 
 class RefsApi:

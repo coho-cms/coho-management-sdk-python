@@ -7,7 +7,7 @@ Coho
 ├── signup_url(), invitation_lookup(), invitation_accept_start()     before a login; send none
 └── account(id_or_name) → Account
     ├── id, name, role, membership
-    ├── rename(), entitlements(), events()
+    ├── rename(), entitlements(), events(), usage() → AccountUsageReport
     ├── members: MembersApi        list, change_role, remove
     ├── invitations: InvitationsApi   list, create, revoke
     ├── projects: ProjectsApi      create(name) → Project, get(id) → Project
@@ -22,6 +22,7 @@ Coho
         ├── roles: RolesApi        list, grant, revoke
         ├── delivery_keys: DeliveryKeysApi  list, issue, revoke, set_public
         ├── export(ref, …), preview(ref) → Preview
+        ├── usage(grain, start, end, meters) → UsageReport
         └── ref(name) → Ref
             ├── info(), export(), preview()
             ├── types: TypesApi    list, get, put, delete

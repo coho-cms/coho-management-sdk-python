@@ -20,6 +20,7 @@ acme.id, acme.name, acme.role          # role: "admin" | "member"
 acme.rename("Acme Ltd")                # admin
 acme.entitlements()                    # admin; Entitlements, None limit = unlimited
 acme.events(limit=100)                 # admin; [AuditEvent], newest first
+acme.usage(grain="day")                # admin; every project summed: see usage.md
 coho.plans(include_retired=False)      # [Plan]
 ```
 
