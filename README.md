@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/coho-cms/coho-management-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/coho-cms/coho-management-sdk-python/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/coho-cms/coho-management-sdk-python)
-[![licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](https://github.com/coho-cms/coho-management-sdk-python/blob/main/LICENSE)
+[![licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/LICENSE)
 
 The Python **management** SDK for Coho: accounts, projects, branches, content,
 releases and delivery keys. It is the library under the
@@ -59,13 +59,13 @@ Python 3.11+. Synchronous, built on [httpx](https://www.python-httpx.org/). Type
 
 | | |
 |---|---|
-| [Getting started](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/getting-started.md) | constructing a client, profiles, tokens |
-| [Object model](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/object-model.md) | `Coho` → `Account` → `Project` → `Ref`, every method |
-| [Accounts and members](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/accounts.md) | `me`, members, invitations, entitlements |
-| [Content](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/content.md) | types, entries, ETags, pagination, history |
-| [Branches and releases](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/releases.md) | diff, merge, tags, promotion, rollback, export |
-| [Errors](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/errors.md) | the class per code, and what each means |
-| [Testing](https://github.com/coho-cms/coho-management-sdk-python/blob/main/docs/testing.md) | `FakeBff`, a contract-shaped fake server |
+| [Getting started](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/getting-started.md) | constructing a client, profiles, tokens |
+| [Object model](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/object-model.md) | `Coho` → `Account` → `Project` → `Ref`, every method |
+| [Accounts and members](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/accounts.md) | `me`, members, invitations, entitlements |
+| [Content](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/content.md) | types, entries, ETags, pagination, history |
+| [Branches and releases](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/releases.md) | diff, merge, tags, promotion, rollback, export |
+| [Errors](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/errors.md) | the class per code, and what each means |
+| [Testing](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/docs/testing.md) | `FakeBff`, a contract-shaped fake server |
 
 ## What it talks to
 
@@ -75,7 +75,7 @@ secret, and the BFF chooses the actor for the account in the URL. That is what m
 this repository safe to publish.
 
 The contracts it implements are vendored in
-[`contracts/`](https://github.com/coho-cms/coho-management-sdk-python/tree/main/contracts) at a
+[`contracts/`](https://github.com/coho-cms/coho-management-sdk-python/tree/HEAD/contracts) at a
 pinned commit of the server repository.
 
 ## Related
@@ -88,4 +88,4 @@ pinned commit of the server repository.
 
 ## Licence
 
-Apache-2.0. See [LICENSE](https://github.com/coho-cms/coho-management-sdk-python/blob/main/LICENSE).
+Apache-2.0. See [LICENSE](https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/LICENSE).

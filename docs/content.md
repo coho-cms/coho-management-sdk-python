@@ -25,7 +25,7 @@ dev.types.delete("blogPost", confirm_destructive=True)                   # else 
 
 `put` on an existing type without `if_match` or `force` raises `PreconditionRequired`
 **locally**, before any request. Definitions are documented in
-[content model](https://github.com/coho-cms/coho-cli/blob/main/docs/content-model.md).
+[content model](https://github.com/coho-cms/coho-cli/blob/HEAD/docs/content-model.md).
 
 ## Entries
 

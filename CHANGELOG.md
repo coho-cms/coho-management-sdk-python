@@ -15,6 +15,7 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- On PyPI: `pip install coho-management-sdk`.
 - `Coho.login_url()`: the BFF's sign-in page, for a person to open in a browser, as
   `signup_url()` is for sign-up. Makes no request.
 - `FakeBff.tokens`: the bearer tokens its `/me` answers for, so a test can stand for an

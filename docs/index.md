@@ -42,4 +42,4 @@ The contracts this version implements are vendored in
 [`contracts/`](../contracts/README.md) at a pinned commit of the server repository. The
 task-shaped guides — install, quickstart, authentication, configuration, concepts, the
 content model, CI — live with the
-[CLI](https://github.com/coho-cms/coho-cli/blob/main/docs/index.md).
+[CLI](https://github.com/coho-cms/coho-cli/blob/HEAD/docs/index.md).

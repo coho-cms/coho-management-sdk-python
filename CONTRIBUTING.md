@@ -68,8 +68,10 @@ agrees with the installed metadata.
 | a commit tagged `v0.3.0rc1` | `0.3.0rc1` |
 | a repository with no tags yet | `0.1.devN` |
 
-Installers skip dev and pre-release versions unless a requirement names one, so
-publishing them never surprises anybody: the CLI asks for `>=0.1.0.dev0` on purpose.
+Installers skip dev and pre-release versions whenever a final release fits, unless a
+requirement names one, so publishing them never surprises anybody: the CLI asks for
+`>=2026.1.0a1,<2026.2` on purpose. Until a final release exists, a plain
+`pip install coho-management-sdk` takes the newest pre-release, since nothing else fits.
 
 To release:
 
@@ -78,8 +80,8 @@ To release:
    `vX.Y.ZaN`, `bN` or `rcN` for alphas, betas and release candidates; GitHub marks
    those as pre-releases.
 3. CI tests, builds a wheel and an sdist, installs the wheel into a clean environment
-   to check it imports, uploads both as a build artifact, and attaches them to a
-   GitHub Release for the tag.
+   to check it imports, uploads both as a build artifact, attaches them to a GitHub
+   Release for the tag, and publishes them to PyPI.
 
 ⚠️ **Never tag a dev version.** Dev versions come from commits after a release. A tag
 like `v0.3.0.dev1` makes every later build fail, since a dev build of a dev build
@@ -92,16 +94,16 @@ Every run on `main` and every pull request also uploads the built distributions 
 artifact, so a dev build is downloadable without a release. CI fetches the whole history
 (`fetch-depth: 0`); a shallow clone has no tags and would build a meaningless `0.1.dev1`.
 
-### Publishing to PyPI as well
+### Publishing to PyPI
 
-The workflow has a `publish-pypi` job that is skipped unless you ask for it. To enable:
+Tags publish to [PyPI](https://pypi.org/project/coho-management-sdk/) through the
+`publish-pypi` job. It authenticates as a [trusted publisher](https://docs.pypi.org/trusted-publishers/)
+(this repository, workflow `ci.yml`, environment `pypi`) with a short-lived OIDC token,
+so no API token is stored anywhere. The `pypi` environment accepts only `v*` tags.
+Setting the repository variable `PUBLISH_TO_PYPI` to anything but `true` turns it off.
 
-1. Register this repository as a [trusted publisher](https://docs.pypi.org/trusted-publishers/)
-   on PyPI for the `coho-management-sdk` project, with workflow `ci.yml` and environment `pypi`.
-2. Create a GitHub environment named `pypi` (protect it with required reviewers).
-3. Set the repository variable `PUBLISH_TO_PYPI` to `true`.
-
-No API token is stored anywhere; the job authenticates with a short-lived OIDC token.
+⚠️ PyPI never takes the same version's files twice, even after a delete, so a broken
+release is fixed by the next tag. Release this library before a `coho-cli` that needs it.
 
 ### Build provenance (optional)
 

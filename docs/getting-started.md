@@ -65,7 +65,7 @@ token_store_for(profile).save(profile.name, tokens)
 
 `login(profile, open_browser=…, on_url=…, port=…, http=…)` — see `coho_management_sdk.auth`.
 It needs `profile.oidc_domain` and `profile.client_id`; see
-[authentication](https://github.com/coho-cms/coho-cli/blob/main/docs/authentication.md) for the app client this requires.
+[authentication](https://github.com/coho-cms/coho-cli/blob/HEAD/docs/authentication.md) for the app client this requires.
 
 ## Profiles and context from Python
 

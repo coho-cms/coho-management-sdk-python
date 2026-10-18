@@ -66,7 +66,7 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `InvitationUnusable` | `INVITATION_USED`, `INVITATION_ACCEPTED`, `INVITATION_REVOKED`, `INVITATION_EXPIRED` | |
 | `Internal` | `INTERNAL` | opaque by design |
 
-What each code means in the product is in the [error catalogue](https://github.com/coho-cms/coho-cli/blob/main/docs/errors.md).
+What each code means in the product is in the [error catalogue](https://github.com/coho-cms/coho-cli/blob/HEAD/docs/errors.md).
 
 ## Two problem shapes, one interface
 

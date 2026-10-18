@@ -34,8 +34,8 @@ testing = ["pytest-httpserver>=1.1", "werkzeug>=3.0"]
 [project.urls]
 Homepage = "https://github.com/coho-cms/coho-management-sdk-python"
 Source = "https://github.com/coho-cms/coho-management-sdk-python"
-Documentation = "https://github.com/coho-cms/coho-management-sdk-python/tree/main/docs"
-Changelog = "https://github.com/coho-cms/coho-management-sdk-python/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/coho-cms/coho-management-sdk-python/tree/HEAD/docs"
+Changelog = "https://github.com/coho-cms/coho-management-sdk-python/blob/HEAD/CHANGELOG.md"
 Issues = "https://github.com/coho-cms/coho-management-sdk-python/issues"
 
 [build-system]
