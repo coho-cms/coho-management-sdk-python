@@ -43,6 +43,13 @@ What it encodes:
   `LAST_ADMIN` on demoting the only admin, entitlements with an absent limit.
 - Export: a branch streams three NDJSON lines with `X-Coho-Export-Seq: 42`; a tag
   answers `302` to a blob on the same server.
+- Assets on `dev`, with a fake object store on the same server. An upload is offered a
+  presigned PUT to `/fake-s3/{id}`, which refuses a body whose SHA-256 is not the signed
+  `x-amz-checksum-sha256` (`BadDigest`) or a request without `x-amz-tagging`, in S3's
+  XML. Bytes it already holds (`bff.blobs`) get no URL. Completing before the PUT is
+  `ASSET_UPLOAD_INCOMPLETE`, and anything that is not a PNG, JPEG, PDF or SVG is
+  `ASSET_TYPE_NOT_ALLOWED`. Completed assets are in `bff.assets`, listed in slug order,
+  with `If-Match` on `put` and `delete` as for entries.
 - Account `gateway` answers a `502` HTML page, to test non-problem failures.
 
 `bff.requests` is every request seen by the handlers that record (writes, mostly);

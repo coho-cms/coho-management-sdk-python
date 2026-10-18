@@ -17,8 +17,11 @@ detail}`` problems, so a test reads like a transcript against the real thing.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
+import uuid
 from typing import Any
 
 from pytest_httpserver import HTTPServer
@@ -102,7 +105,13 @@ class FakeBff:
         self.invalid_entries: list[dict[str, Any]] = []
         self.entry_version = "v1"
         self.entry_fields: dict[str, Any] = {"title": {"en-US": "Hello"}, "rank": 1}
+        # Assets (doc 40). `blobs` is what the fake object store holds, by sha256;
+        # `uploads` what was begun; `assets` what was completed, by id.
+        self.blobs: dict[str, bytes] = {}
+        self.uploads: dict[str, dict[str, Any]] = {}
+        self.assets: dict[str, dict[str, Any]] = {}
         self._install()
+        self._install_assets()
 
     @property
     def url(self) -> str:
@@ -727,6 +736,165 @@ class FakeBff:
             "<html>502 Bad Gateway</html>", status=502, content_type="text/html"
         )
 
+    def _install_assets(self) -> None:
+        """The asset routes on ``dev``, and a fake object store for the presigned PUT.
+
+        The store checks what S3 checks: the body's SHA-256 against the signed
+        ``x-amz-checksum-sha256``, and that the staging tag was sent. A refusal is S3's
+        XML, not a problem document.
+        """
+        s = self.server
+        r = f"/api/v1/accounts/{ACCOUNT}/projects/{PROJECT}/refs/dev"
+        uid = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+        def begin(request: Request) -> Response:
+            self._record(request)
+            body = request.get_json()
+            sha = str(body.get("sha256", ""))
+            if not re.fullmatch(r"[0-9a-f]{64}", sha):
+                return problem(400, "BAD_REQUEST", "sha256 must be 64 lower-case hex digits")
+            if int(body["byteSize"]) > 1 << 30:
+                return problem(
+                    400, "ASSET_TOO_LARGE", "too large", limit=1 << 30, current=body["byteSize"]
+                )
+            upload_id = str(uuid.uuid4())
+            self.uploads[upload_id] = {**body, "assetId": None}
+            doc: dict[str, Any] = {"id": upload_id, "expiresAt": "2026-10-18T00:00:00Z"}
+            if sha not in self.blobs:
+                checksum = base64.b64encode(bytes.fromhex(sha)).decode()
+                headers = {
+                    "x-amz-checksum-sha256": checksum,
+                    "x-amz-tagging": "coho-lifecycle=staging",
+                }
+                if body.get("contentType"):
+                    headers["content-type"] = body["contentType"]
+                doc["upload"] = {
+                    "url": f"{self.url}/fake-s3/{upload_id}?X-Amz-Signature=secret",
+                    "method": "PUT",
+                    "headers": headers,
+                    "expiresAt": "2026-10-18T00:00:00Z",
+                }
+            return ok(doc, 201)
+
+        def store(request: Request) -> Response:
+            self._record(request)
+            upload = self.uploads.get(request.path.rsplit("/", 1)[-1])
+            data = request.get_data()
+            if upload is None or "x-amz-tagging" not in request.headers:
+                return _s3_error(403, "SignatureDoesNotMatch", "a signed header is missing")
+            digest = base64.b64encode(hashlib.sha256(data).digest()).decode()
+            if digest != request.headers.get("x-amz-checksum-sha256"):
+                return _s3_error(400, "BadDigest", "the content does not match the checksum")
+            self.blobs[upload["sha256"]] = data
+            return Response("", status=200, headers={"ETag": '"s3"'})
+
+        def complete(request: Request) -> Response:
+            self._record(request)
+            upload_id = request.path.split("/")[-2]
+            upload = self.uploads.get(upload_id)
+            if upload is None:
+                return problem(404, "NOT_FOUND", "Upload not found")
+            if upload["assetId"] is not None:
+                existing = self.assets[upload["assetId"]]
+                return ok(existing, 200, ETag=f'"{existing["version"]}"')
+            data = self.blobs.get(upload["sha256"])
+            if data is None:
+                return problem(400, "ASSET_UPLOAD_INCOMPLETE", "nothing uploaded yet")
+            sniffed = _sniff(data)
+            if sniffed is None:
+                return problem(400, "ASSET_TYPE_NOT_ALLOWED", "not a type Coho stores")
+            body = request.get_json()
+            slug = body["slug"]
+            if any(a["slug"] == slug for a in self.assets.values()) or slug == "taken":
+                return problem(400, "SLUG_CONFLICT", "slug in use", slug=slug, ref="dev")
+            asset_id = str(uuid.uuid4())
+            file = {
+                "sha256": upload["sha256"],
+                "byteSize": len(data),
+                "mediaType": sniffed[0],
+                "filename": upload["filename"],
+            }
+            if sniffed[1] is not None:
+                file["width"], file["height"] = sniffed[1], sniffed[2]
+            asset = self._asset(asset_id, slug, "a1", file, body)
+            self.assets[asset_id] = asset
+            upload["assetId"] = asset_id
+            return ok(asset, 201, ETag='"a1"', Location=f"{r}/assets/{asset_id}")
+
+        def list_assets(request: Request) -> Response:
+            self._record(request)
+            offset = int(request.args.get("offset", 0))
+            limit = int(request.args.get("limit", 100))
+            ordered = sorted(self.assets.values(), key=lambda a: a["slug"])
+            page = ordered[offset : offset + limit]
+            return ok(
+                {
+                    "assets": page,
+                    "page": {
+                        "limit": limit,
+                        "offset": offset,
+                        "hasMore": offset + limit < len(ordered),
+                    },
+                }
+            )
+
+        def one(request: Request) -> Response:
+            self._record(request)
+            asset_id = request.path.rsplit("/", 1)[-1]
+            asset = self.assets.get(asset_id)
+            if asset is None:
+                return problem(404, "NOT_FOUND", f"Asset '{asset_id}' not found")
+            if request.method == "GET":
+                return ok(asset, ETag=f'"{asset["version"]}"')
+            etag = request.headers.get("If-Match")
+            if etag is None:
+                return problem(428, "PRECONDITION_REQUIRED", "If-Match required", header="If-Match")
+            if etag != f'"{asset["version"]}"':
+                return problem(
+                    412,
+                    "VERSION_CONFLICT",
+                    "stale",
+                    expectedVersion=etag.strip('"'),
+                    currentVersion=asset["version"],
+                )
+            if request.method == "DELETE":
+                del self.assets[asset_id]
+                return Response("", status=204, headers={"ETag": '"tombstone"'})
+            version = "a" + str(int(asset["version"][1:]) + 1)
+            edited = self._asset(
+                asset_id, asset["slug"], version, asset["file"], request.get_json()
+            )
+            self.assets[asset_id] = edited
+            return ok(edited, ETag=f'"{version}"')
+
+        s.expect_request(f"{r}/assets/uploads", method="POST").respond_with_handler(begin)
+        s.expect_request(re.compile(rf"^/fake-s3/{uid}$"), method="PUT").respond_with_handler(store)
+        s.expect_request(
+            re.compile(rf"^{re.escape(r)}/assets/uploads/{uid}/complete$"), method="POST"
+        ).respond_with_handler(complete)
+        s.expect_request(f"{r}/assets", method="GET").respond_with_handler(list_assets)
+        s.expect_request(re.compile(rf"^{re.escape(r)}/assets/{uid}$")).respond_with_handler(one)
+
+    def _asset(
+        self, asset_id: str, slug: str, version: str, file: dict[str, Any], details: dict[str, Any]
+    ) -> dict[str, Any]:
+        base = f"https://assets.example.test/{PROJECT}"
+        name = str(file["filename"]).replace(" ", "%20")
+        doc: dict[str, Any] = {
+            "id": asset_id,
+            "slug": slug,
+            "version": version,
+            "file": file,
+            "tags": list(details.get("tags") or []),
+            "url": f"{base}/a/{file['sha256']}/{name}",
+        }
+        for key in ("title", "alt", "focalPoint"):
+            if details.get(key) is not None:
+                doc[key] = details[key]
+        if file["mediaType"] in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+            doc["imageUrl"] = f"{base}/i/{file['sha256']}/{name}"
+        return doc
+
     def _entry(self, i: int) -> dict[str, Any]:
         return {
             "id": f"0000000{i}-0000-4000-8000-000000000000",
@@ -735,3 +903,22 @@ class FakeBff:
             "version": f"e{i}",
             "fields": {"title": {"en-US": f"Post {i}"}, "rank": i},
         }
+
+
+def _s3_error(status: int, code: str, message: str) -> Response:
+    """Object storage's own refusal: XML, not a problem document."""
+    body = f'<?xml version="1.0"?><Error><Code>{code}</Code><Message>{message}</Message></Error>'
+    return Response(body, status=status, content_type="application/xml")
+
+
+def _sniff(data: bytes) -> tuple[str, int | None, int | None] | None:
+    """What the server would say the bytes are: enough of its allowlist for tests."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
+        return "image/png", int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", None, None
+    if data.startswith(b"%PDF-"):
+        return "application/pdf", None, None
+    if data.lstrip().startswith(b"<svg"):
+        return "image/svg+xml", None, None
+    return None

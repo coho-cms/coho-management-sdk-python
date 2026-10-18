@@ -267,6 +267,61 @@ class Internal(CohoError):
     code = "INTERNAL"
 
 
+class UploadRejected(TransportError):
+    """Object storage refused an upload's bytes on its presigned URL.
+
+    Not a Coho problem document: the store answers in its own XML. ``storage_code`` is
+    its code, such as ``BadDigest`` (the bytes are not the ones hashed),
+    ``SignatureDoesNotMatch`` (a signed header was changed or left out) or
+    ``AccessDenied`` (often an expired URL).
+    """
+
+    code = "UPLOAD_REJECTED"
+
+    @property
+    def storage_code(self) -> str | None:
+        value = self.context.get("storageCode")
+        return str(value) if value is not None else None
+
+
+# -- assets (doc 40) -----------------------------------------------------------
+
+
+class AssetsUnavailable(UpstreamUnavailable):
+    """This deployment has no asset store. Nothing was written; nothing you send fixes it."""
+
+    code = "ASSETS_UNAVAILABLE"
+
+
+class AssetTooLarge(CohoError):
+    """The file is over the per-file limit. ``limit`` and ``current`` are in bytes."""
+
+    code = "ASSET_TOO_LARGE"
+
+    @property
+    def limit(self) -> int | None:
+        value = self.context.get("limit")
+        return int(value) if value is not None else None
+
+
+class AssetTypeNotAllowed(CohoError):
+    """The bytes are not an image, PDF, audio or video, whatever the filename says."""
+
+    code = "ASSET_TYPE_NOT_ALLOWED"
+
+
+class AssetUploadIncomplete(CohoError):
+    """Nothing was PUT for the upload yet, or not the bytes it named. PUT, then complete."""
+
+    code = "ASSET_UPLOAD_INCOMPLETE"
+
+
+class AssetUploadExpired(CohoError):
+    """The upload was not completed within its hour. Start a new one."""
+
+    code = "ASSET_UPLOAD_EXPIRED"
+
+
 # -- codes from the auth tier (accounts, members, invitations) ------------------
 # That tier's problems are a bare ``{code, detail}``; the codes are still exact.
 
@@ -341,6 +396,11 @@ _BY_CODE: dict[str, type[CohoError]] = {
         AccountMismatch,
         UpstreamUnavailable,
         Internal,
+        AssetsUnavailable,
+        AssetTooLarge,
+        AssetTypeNotAllowed,
+        AssetUploadIncomplete,
+        AssetUploadExpired,
         InsufficientScope,
         AccountAdminRequired,
         Invalid,

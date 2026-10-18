@@ -15,7 +15,7 @@ from urllib.parse import quote
 import httpx
 
 from ._version import __version__
-from .errors import CohoError, TransportError, error_for_response
+from .errors import CohoError, TransportError, UploadRejected, error_for_response
 
 TokenProvider = Callable[[], str | None]
 """Returns the access token to send, or ``None`` for an anonymous request."""
@@ -171,6 +171,41 @@ class Transport:
     def delete(self, path: str, **kw: Any) -> Response:
         return self.request("DELETE", path, **kw)
 
+    def put_presigned(
+        self,
+        url: str,
+        headers: dict[str, str],
+        content: bytes | Iterator[bytes],
+        *,
+        length: int,
+    ) -> None:
+        """PUT bytes to a presigned object-storage URL, outside the BFF.
+
+        The URL is absolute and carries its own signature, so no bearer token is sent:
+        the store would refuse a request with two credentials, and the token is the
+        BFF's, not the store's. ``headers`` are sent exactly as given, because they are
+        part of the signature, and ``length`` as ``Content-Length``, because a presigned
+        PUT cannot be chunked.
+
+        A refusal is the store's own XML, raised as `UploadRejected` with its code.
+        """
+        request_headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+        request_headers["Content-Length"] = str(length)
+        request_headers["User-Agent"] = self._user_agent
+        try:
+            raw = self._client.request("PUT", url, content=content, headers=request_headers)
+        except httpx.HTTPError as exc:
+            raise TransportError(f"PUT {_redact(url)}: {exc}") from exc
+        if raw.status_code >= 400:
+            storage_code = _xml_value(raw.text, "Code")
+            message = _xml_value(raw.text, "Message") or f"HTTP {raw.status_code}"
+            raise UploadRejected(
+                f"object storage refused the upload: {storage_code or raw.status_code}: {message}",
+                status=raw.status_code,
+                detail=message,
+                context={"storageCode": storage_code} if storage_code else {},
+            )
+
     def stream_bytes(self, response: Response, chunk_size: int = 65536) -> Iterator[bytes]:
         """Iterate a streaming response's body, then close it."""
         try:
@@ -207,3 +242,17 @@ def pretty(body: Any) -> str:
 
 
 __all__ = ["Transport", "Response", "TokenProvider", "CohoError", "segment", "pretty"]
+
+
+def _redact(url: str) -> str:
+    """A presigned URL without its query, which holds the signature."""
+    return url.split("?", 1)[0]
+
+
+def _xml_value(text: str, tag: str) -> str | None:
+    """One element's text from an S3 error document, without an XML parser for one field."""
+    start = text.find(f"<{tag}>")
+    end = text.find(f"</{tag}>", start)
+    if start < 0 or end < 0:
+        return None
+    return text[start + len(tag) + 2 : end].strip() or None

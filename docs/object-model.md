@@ -25,7 +25,9 @@ Coho
         └── ref(name) → Ref
             ├── info(), export(), preview()
             ├── types: TypesApi    list, get, put, delete
-            └── entries: EntriesApi   list, iterate, get, create, put, delete, history, references
+            ├── entries: EntriesApi   list, iterate, get, create, put, delete, history, references
+            └── assets: AssetsApi  upload, list, iterate, get, put, delete;
+                                   begin_upload, put_bytes, complete_upload
 ```
 
 Each level owns the path segment it adds:
@@ -60,6 +62,9 @@ response as received. The important ones:
 | `ContentType` | `slug`, `version`, `definition`, `etag`, `.name`, `.fields` |
 | `Entry` | `id`, `type`, `slug`, `version`, `fields`, `etag` |
 | `EntryPage` | `entries`, `page.has_more`, `page.offset` |
+| `Asset` | `id`, `slug`, `version`, `file: AssetFile`, `title`, `alt`, `focal_point`, `tags`, `url`, `image_url`, `etag` |
+| `AssetFile` | `sha256`, `byte_size`, `media_type`, `filename`, `width`, `height` (raster only) |
+| `AssetUpload`, `PresignedPut` | upload: `id`, `expires_at`, `put` (`None` when the project holds the bytes); put: `url`, `headers` |
 | `History`, `HistoryEntry` | versions by `seq` desc; `op` is `upsert`/`tombstone` |
 | `References` | `incoming: [IncomingReference]`, `total` |
 | `Diff` | `added`, `modified`, `deleted`, `nodes`, `conflicts`, `merge_token`, `base` |

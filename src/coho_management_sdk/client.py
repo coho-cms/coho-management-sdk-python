@@ -13,6 +13,9 @@ CLI is a thin layer over these classes; anything the CLI can do is one call here
 from __future__ import annotations
 
 import builtins
+import hashlib
+import mimetypes
+import os
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -23,7 +26,7 @@ import httpx
 
 from . import models as m
 from .auth import TokenProvider, token_store_for
-from .errors import CohoError, NotFound, PreconditionRequired, SnapshotNotReady
+from .errors import AssetTooLarge, CohoError, NotFound, PreconditionRequired, SnapshotNotReady
 from .profiles import Config, Profile
 from .transport import Response, Transport, segment
 
@@ -807,6 +810,7 @@ class Ref:
         self.path = f"{project.path}/refs/{segment(name)}"
         self.types = TypesApi(self)
         self.entries = EntriesApi(self)
+        self.assets = AssetsApi(self)
 
     def info(self) -> m.RefInfo:
         return self.project.refs.get(self.name)
@@ -977,4 +981,232 @@ class EntriesApi:
         )
 
 
-__all__ = ["Coho", "Account", "Project", "Ref", "Preview"]
+# ---------------------------------------------------------------------------
+# Assets
+# ---------------------------------------------------------------------------
+
+AssetSource = str | os.PathLike[str] | bytes
+"""A path to a file, or the bytes themselves."""
+
+_CHUNK = 1024 * 1024
+
+
+class AssetsApi:
+    """Files on a ref (doc 40): images, PDF, audio and video.
+
+    An asset is a node like an entry, so it branches and merges; its bytes, addressed by
+    their sha256, do not branch at all. Uploading is three requests, and ``upload`` does
+    all of them:
+
+    1. ``begin_upload``: the hash and size, which are signed into a presigned PUT;
+    2. ``put_bytes``: the bytes, straight to object storage, never through the BFF;
+    3. ``complete_upload``: the server checks what arrived and writes the asset.
+
+    ⚠️ Every asset is public to anyone holding its URL, drafts included, and deleting an
+    asset does not stop its URL working (doc 40 §7.0).
+    """
+
+    MAX_BYTES = 1 << 30
+    """The per-file limit the server enforces, so a caller can refuse early."""
+
+    def __init__(self, ref: Ref) -> None:
+        self._r = ref
+        self._t = ref._t
+
+    def list(self, *, limit: int | None = None, offset: int | None = None) -> m.AssetPage:
+        """One page, in slug order. ``limit`` is 1..1000 (default 100)."""
+        body = self._t.get(f"{self._r.path}/assets", params={"limit": limit, "offset": offset}).body
+        return m.AssetPage.from_dict(body or {})
+
+    def iterate(self, *, page_size: int = 100) -> Iterator[m.Asset]:
+        """Every asset, page by page."""
+        offset = 0
+        while True:
+            page = self.list(limit=page_size, offset=offset)
+            yield from page.assets
+            if not page.page.has_more or not page.assets:
+                return
+            offset += len(page.assets)
+
+    def get(self, asset_id: str) -> m.Asset:
+        resp = self._t.get(f"{self._r.path}/assets/{segment(asset_id)}")
+        return m.Asset.from_dict(resp.body, etag=resp.etag)
+
+    def upload(
+        self,
+        source: AssetSource,
+        *,
+        slug: str,
+        filename: str | None = None,
+        title: str | None = None,
+        alt: str | None = None,
+        focal_point: m.FocalPoint | None = None,
+        tags: builtins.list[str] | None = None,
+        content_type: str | None = None,
+    ) -> m.Asset:
+        """Upload a file and write it as an asset on this branch.
+
+        Hashes the file, starts the upload, PUTs the bytes (skipped when the project
+        already holds them) and completes it. ``filename`` defaults to the path's name,
+        and is required for bytes. Raises `AssetTooLarge` before sending anything when
+        the file is over `MAX_BYTES`.
+        """
+        sha256, size = sha256_of(source)
+        if filename is None:
+            if isinstance(source, bytes):
+                raise ValueError("upload() of bytes needs a filename")
+            filename = Path(source).name
+        if size > self.MAX_BYTES:
+            raise AssetTooLarge(
+                f"{filename} is {size} bytes; an asset may be at most {self.MAX_BYTES}",
+                code="ASSET_TOO_LARGE",
+                context={"limit": self.MAX_BYTES, "current": size},
+            )
+        guessed = content_type or mimetypes.guess_type(filename)[0]
+        upload = self.begin_upload(
+            sha256=sha256, byte_size=size, filename=filename, content_type=guessed
+        )
+        if upload.put is not None:
+            self.put_bytes(upload, source, length=size)
+        return self.complete_upload(
+            upload.id, slug=slug, title=title, alt=alt, focal_point=focal_point, tags=tags
+        )
+
+    def begin_upload(
+        self, *, sha256: str, byte_size: int, filename: str, content_type: str | None = None
+    ) -> m.AssetUpload:
+        """Start an upload. The hash and size must be exact: the store refuses anything else."""
+        body: JSON = {"sha256": sha256, "byteSize": byte_size, "filename": filename}
+        if content_type:
+            body["contentType"] = content_type
+        return m.AssetUpload.from_dict(self._t.post(f"{self._r.path}/assets/uploads", body).body)
+
+    def put_bytes(self, upload: m.AssetUpload, source: AssetSource, *, length: int) -> None:
+        """Send an upload's bytes to its presigned URL, streaming a file rather than reading it."""
+        if upload.put is None:
+            return
+        content: bytes | Iterator[bytes] = source if isinstance(source, bytes) else _chunks(source)
+        self._t.put_presigned(upload.put.url, upload.put.headers, content, length=length)
+
+    def complete_upload(
+        self,
+        upload_id: str,
+        *,
+        slug: str,
+        title: str | None = None,
+        alt: str | None = None,
+        focal_point: m.FocalPoint | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> m.Asset:
+        """Finish an upload and write the asset. Completing again returns the same asset."""
+        body = _asset_details(title=title, alt=alt, focal_point=focal_point, tags=tags)
+        body["slug"] = slug
+        resp = self._t.post(f"{self._r.path}/assets/uploads/{segment(upload_id)}/complete", body)
+        return m.Asset.from_dict(resp.body, etag=resp.etag)
+
+    def put(
+        self,
+        asset: m.Asset | str,
+        *,
+        title: str | None = None,
+        alt: str | None = None,
+        focal_point: m.FocalPoint | None = None,
+        tags: builtins.list[str] | None = None,
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> m.Asset:
+        """Replace an asset's metadata. The file itself is never editable.
+
+        A whole replacement, as for entries. Given an `Asset`, its own ``title``, ``alt``,
+        ``focal_point`` and ``tags`` are sent, overridden by any passed here, and its
+        ``etag`` becomes ``If-Match``. Given an id, what is passed is all there is, and
+        ``if_match`` or ``force=True`` is required.
+        """
+        if isinstance(asset, m.Asset):
+            asset_id = asset.id
+            body = _asset_details(
+                title=title if title is not None else asset.title,
+                alt=alt if alt is not None else asset.alt,
+                focal_point=focal_point if focal_point is not None else asset.focal_point,
+                tags=tags if tags is not None else asset.tags,
+            )
+            etag = if_match or asset.etag
+        else:
+            asset_id = asset
+            body = _asset_details(title=title, alt=alt, focal_point=focal_point, tags=tags)
+            etag = if_match
+        etag = self._precondition(asset_id, etag, force, "an update")
+        resp = self._t.put(f"{self._r.path}/assets/{segment(asset_id)}", body, if_match=etag)
+        return m.Asset.from_dict(resp.body, etag=resp.etag)
+
+    def delete(
+        self, asset: m.Asset | str, *, if_match: str | None = None, force: bool = False
+    ) -> str | None:
+        """Tombstone an asset on this branch. Returns the tombstone's ETag.
+
+        ⚠️ The bytes stay, and the asset's URL keeps working: history and released tags
+        still point at it.
+        """
+        asset_id = asset.id if isinstance(asset, m.Asset) else asset
+        etag = if_match or (asset.etag if isinstance(asset, m.Asset) else None)
+        etag = self._precondition(asset_id, etag, force, "a delete")
+        resp: Response = self._t.delete(f"{self._r.path}/assets/{segment(asset_id)}", if_match=etag)
+        return resp.etag
+
+    def _precondition(self, asset_id: str, etag: str | None, force: bool, what: str) -> str:
+        if etag is not None:
+            return etag
+        if not force:
+            raise PreconditionRequired(
+                f"{what} needs the ETag from the read it is based on; pass if_match=…, "
+                "or force=True to act on the current version",
+                code="PRECONDITION_REQUIRED",
+                status=428,
+            )
+        current = self.get(asset_id).etag
+        if current is None:
+            raise PreconditionRequired(
+                "the server returned no ETag", code="PRECONDITION_REQUIRED", status=428
+            )
+        return current
+
+
+def sha256_of(source: AssetSource) -> tuple[str, int]:
+    """The SHA-256, as lower-case hex, and the size of a file or of bytes. Streams a file."""
+    digest = hashlib.sha256()
+    if isinstance(source, bytes):
+        digest.update(source)
+        return digest.hexdigest(), len(source)
+    size = 0
+    for chunk in _chunks(source):
+        digest.update(chunk)
+        size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _chunks(path: str | os.PathLike[str]) -> Iterator[bytes]:
+    with open(path, "rb") as f:
+        while chunk := f.read(_CHUNK):
+            yield chunk
+
+
+def _asset_details(
+    *,
+    title: str | None,
+    alt: str | None,
+    focal_point: m.FocalPoint | None,
+    tags: builtins.list[str] | None,
+) -> JSON:
+    body: JSON = {}
+    if title is not None:
+        body["title"] = title
+    if alt is not None:
+        body["alt"] = alt
+    if focal_point is not None:
+        body["focalPoint"] = focal_point.to_dict()
+    if tags:
+        body["tags"] = builtins.list(tags)
+    return body
+
+
+__all__ = ["Coho", "Account", "Project", "Ref", "Preview", "AssetsApi", "sha256_of"]

@@ -34,6 +34,8 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 |---|---|---|
 | `TransportError` | `TRANSPORT`, `HTTP_<status>` | could not reach the server, or a non-problem response |
 | ↳ `UpstreamUnavailable` | `UPSTREAM_UNAVAILABLE` | the BFF could not reach a tier |
+| ↳↳ `AssetsUnavailable` | `ASSETS_UNAVAILABLE` | the deployment has no asset store |
+| ↳ `UploadRejected` | `UPLOAD_REJECTED` | object storage refused an upload's bytes; `.storage_code` (`BadDigest`, `SignatureDoesNotMatch`, `AccessDenied`) |
 | `AuthError` | `AUTH` | the login flow failed |
 | ↳ `NotLoggedIn` | `NOT_LOGGED_IN` | no token for the profile |
 | `Unauthenticated` | `UNAUTHENTICATED` | |
@@ -64,6 +66,10 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `AlreadyRegistered` | `ALREADY_REGISTERED` | |
 | `AccountClosed` | `ACCOUNT_CLOSED` | |
 | `InvitationUnusable` | `INVITATION_USED`, `INVITATION_ACCEPTED`, `INVITATION_REVOKED`, `INVITATION_EXPIRED` | |
+| `AssetTooLarge` | `ASSET_TOO_LARGE` | `.limit` in bytes; also raised locally by `assets.upload` before sending |
+| `AssetTypeNotAllowed` | `ASSET_TYPE_NOT_ALLOWED` | the bytes are not an image, PDF, audio or video |
+| `AssetUploadIncomplete` | `ASSET_UPLOAD_INCOMPLETE` | completed before the PUT, or other bytes |
+| `AssetUploadExpired` | `ASSET_UPLOAD_EXPIRED` | not completed within the hour; begin again |
 | `Internal` | `INTERNAL` | opaque by design |
 
 What each code means in the product is in the [error catalogue](https://github.com/coho-cms/coho-cli/blob/HEAD/docs/errors.md).

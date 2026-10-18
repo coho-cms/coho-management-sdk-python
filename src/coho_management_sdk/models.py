@@ -568,6 +568,146 @@ class References:
 
 
 # ---------------------------------------------------------------------------
+# Assets
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class FocalPoint:
+    """Where a crop centres, as fractions of the image's width and height (``0..1``)."""
+
+    x: float
+    y: float
+
+    def to_dict(self) -> JSON:
+        return {"x": self.x, "y": self.y}
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> FocalPoint:
+        return cls(x=float(raw.get("x", 0.5)), y=float(raw.get("y", 0.5)))
+
+
+@dataclass(slots=True)
+class AssetFile:
+    """The bytes an asset points at, as the server sniffed them. Never set by a client."""
+
+    sha256: str
+    byte_size: int
+    media_type: str
+    filename: str
+    width: int | None = None
+    """Raster images only, as is ``height``."""
+    height: int | None = None
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> AssetFile:
+        return cls(
+            sha256=str(raw.get("sha256", "")),
+            byte_size=int(raw.get("byteSize", 0)),
+            media_type=str(raw.get("mediaType", "")),
+            filename=str(raw.get("filename", "")),
+            width=raw.get("width"),
+            height=raw.get("height"),
+        )
+
+
+@dataclass(slots=True)
+class Asset:
+    """An asset as resolved on a ref. Carries its ``etag`` for the next ``put``/``delete``.
+
+    ⚠️ ``url`` and ``image_url`` are public to anyone holding them, drafts included, and
+    deleting the asset does not stop them working (doc 40 §7.0).
+    """
+
+    id: str
+    slug: str
+    version: str
+    file: AssetFile
+    title: str | None = None
+    alt: str | None = None
+    focal_point: FocalPoint | None = None
+    tags: list[str] = field(default_factory=list)
+    url: str | None = None
+    """The original, from the asset CDN."""
+    image_url: str | None = None
+    """Raster images only: append ``?w=…`` and friends to resize on request."""
+    etag: str | None = None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON, etag: str | None = None) -> Asset:
+        focal = raw.get("focalPoint")
+        return cls(
+            id=str(raw.get("id", "")),
+            slug=str(raw.get("slug", "")),
+            version=str(raw.get("version", "")),
+            file=AssetFile.from_dict(raw.get("file") or {}),
+            title=raw.get("title"),
+            alt=raw.get("alt"),
+            focal_point=FocalPoint.from_dict(focal) if isinstance(focal, dict) else None,
+            tags=[str(t) for t in raw.get("tags") or []],
+            url=raw.get("url"),
+            image_url=raw.get("imageUrl"),
+            etag=etag or (f'"{raw["version"]}"' if raw.get("version") else None),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class AssetPage:
+    assets: list[Asset]
+    page: Page
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> AssetPage:
+        return cls(
+            assets=[Asset.from_dict(a) for a in _list(raw, "assets")],
+            page=Page.from_dict(raw.get("page") or {}),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class PresignedPut:
+    """Where to PUT an upload's bytes. Send every header, exactly: they are signed."""
+
+    url: str
+    method: str
+    headers: dict[str, str]
+    expires_at: str
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> PresignedPut:
+        return cls(
+            url=str(raw.get("url", "")),
+            method=str(raw.get("method", "PUT")),
+            headers={str(k): str(v) for k, v in (raw.get("headers") or {}).items()},
+            expires_at=str(raw.get("expiresAt", "")),
+        )
+
+
+@dataclass(slots=True)
+class AssetUpload:
+    """A started upload. ``put`` is ``None`` when the project already holds the bytes."""
+
+    id: str
+    expires_at: str
+    put: PresignedPut | None = None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> AssetUpload:
+        upload = raw.get("upload")
+        return cls(
+            id=str(raw.get("id", "")),
+            expires_at=str(raw.get("expiresAt", "")),
+            put=PresignedPut.from_dict(upload) if isinstance(upload, dict) else None,
+            raw=raw,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Diff and merge
 # ---------------------------------------------------------------------------
 

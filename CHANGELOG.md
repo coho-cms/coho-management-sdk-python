@@ -15,6 +15,16 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- Assets: `ref.assets` (`AssetsApi`). `upload(path, slug=…)` hashes a file, starts an
+  upload, PUTs the bytes straight to object storage on the presigned URL (skipped when
+  the project already holds them) and completes it. Also `list`, `iterate`, `get`,
+  `put` (metadata, with `If-Match`), `delete`, and the three upload steps on their own.
+  Models `Asset`, `AssetFile`, `AssetPage`, `AssetUpload`, `PresignedPut`, `FocalPoint`;
+  `sha256_of`. Errors `UploadRejected` (the store's refusal, with `storage_code`),
+  `AssetsUnavailable`, `AssetTooLarge`, `AssetTypeNotAllowed`, `AssetUploadIncomplete`
+  and `AssetUploadExpired`. `FakeBff` encodes the routes and a fake object store. Needs
+  a server with the asset routes (coho-data doc 40). ⚠️ Asset URLs are public to anyone
+  holding them: see `docs/assets.md`.
 - On PyPI: `pip install coho-management-sdk`.
 - `Coho.login_url()`: the BFF's sign-in page, for a person to open in a browser, as
   `signup_url()` is for sign-up. Makes no request.
