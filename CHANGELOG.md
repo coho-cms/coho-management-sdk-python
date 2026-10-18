@@ -71,6 +71,9 @@ All notable changes to `coho-management-sdk`. The format follows
 - The Windows type check failed on `os.fchmod`, which kept CI red and meant no
   build artifact was ever produced. `restrict_to_owner` now uses a `sys.platform`
   check that type checkers understand.
+- The fake BFF's `preview/dev/entries` answered with authoring's list shape
+  (`entries` as a list, plus `page`). It now answers with delivery's `EntryGraph`
+  (`roots`, `entries` keyed by id, `unresolved`, `hasMore`), as the real endpoint does.
 
 ## [0.1.0] — unreleased
 

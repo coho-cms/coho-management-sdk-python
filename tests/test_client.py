@@ -269,7 +269,7 @@ def test_export_tag_follows_redirect(coho: Coho, tmp_path) -> None:  # type: ign
 
 def test_preview_goes_through_the_bff(coho: Coho, bff: FakeBff) -> None:
     body = coho.account("acme").project(PROJECT).preview("dev").entries(locale="en-US")
-    assert body["entries"][0]["slug"] == "hello"
+    assert body["entries"][body["roots"][0]]["slug"] == "hello"
 
 
 def test_non_problem_failure_is_transport_error(coho: Coho) -> None:

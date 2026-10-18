@@ -691,13 +691,20 @@ class FakeBff:
             b'{"id":"a"}\n', content_type="application/x-ndjson"
         )
 
-        # --- preview ---
+        # --- preview: delivery's EntryGraph, not authoring's {items, page} ---
         s.expect_request(f"{p}/preview/dev/entries", method="GET").respond_with_json(
             {
-                "entries": [
-                    {"id": ENTRY, "type": "blogPost", "slug": "hello", "fields": {"title": "Hello"}}
-                ],
-                "page": {"limit": 25, "offset": 0, "hasMore": False},
+                "roots": [ENTRY],
+                "entries": {
+                    ENTRY: {
+                        "id": ENTRY,
+                        "type": "blogPost",
+                        "slug": "hello",
+                        "fields": {"title": "Hello"},
+                    }
+                },
+                "unresolved": {},
+                "hasMore": False,
             }
         )
 
