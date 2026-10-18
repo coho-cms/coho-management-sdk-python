@@ -49,6 +49,7 @@ tags:
   - name: Entries
   - name: Assets
   - name: Diff and merge
+  - name: Usage
 
 paths:
 
@@ -108,6 +109,47 @@ paths:
         '404':
           $ref: '#/components/responses/Problem'
           description: Not a member of that organization — or it does not exist. Deliberately indistinguishable.
+
+  /v1/projects/usage:
+    parameters:
+      - name: from
+        in: query
+        schema: { type: string, format: date-time }
+        description: Inclusive, rounded down to a whole period. Defaults to one day (hourly) or 30 days (daily) before `to`.
+      - name: to
+        in: query
+        schema: { type: string, format: date-time }
+        description: Exclusive, rounded up to a whole period. Defaults to the end of the current period.
+      - name: grain
+        in: query
+        schema:
+          type: string
+          enum: [hour, day]
+          default: hour
+      - name: meter
+        in: query
+        schema: { type: string }
+        description: Comma-separated meter names (doc 41 §2). Every meter by default.
+    get:
+      tags: [Usage]
+      summary: Your account's usage, every project summed
+      description: |
+        Account admins only (doc 41 MT-10); a member is refused `403`, and a
+        project token is refused as on every route above projects. `meters` sums
+        every project's series per bucket with the dimensions collapsed;
+        `projects` gives each project's totals.
+      operationId: accountUsage
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountUsageResponse' }
+        '400':
+          $ref: '#/components/responses/Problem'
+          description: '`USAGE_QUERY_INVALID`'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}:
     parameters:
@@ -566,6 +608,48 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiffResponse' }
         '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/usage:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - name: from
+        in: query
+        schema: { type: string, format: date-time }
+        description: Inclusive, rounded down to a whole period. Defaults to one day (hourly) or 30 days (daily) before `to`.
+      - name: to
+        in: query
+        schema: { type: string, format: date-time }
+        description: Exclusive, rounded up to a whole period. Defaults to the end of the current period.
+      - name: grain
+        in: query
+        schema:
+          type: string
+          enum: [hour, day]
+          default: hour
+      - name: meter
+        in: query
+        schema: { type: string }
+        description: Comma-separated meter names (doc 41 §2). Every meter by default.
+    get:
+      tags: [Usage]
+      summary: The project's usage, hour by hour or day by day
+      description: |
+        The meters of doc 41 §2, one series per combination of dimensions —
+        delivery by key, management by actor kind and class — with `values` lined
+        up with `buckets`. A stock is filled forward from its last change. Hourly
+        rows are kept 90 days; ask for `grain=day` further back. Readable by
+        anyone who can read the project, project tokens included.
+      operationId: projectUsage
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageReportResponse' }
+        '400':
+          $ref: '#/components/responses/Problem'
+          description: '`USAGE_QUERY_INVALID`'
         '404': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}/merges:
@@ -1468,6 +1552,62 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+
+    UsageMeter:
+      type: object
+      required: [meter, kind, unit, series]
+      properties:
+        meter: { type: string, examples: [delivery.requests] }
+        kind:
+          type: string
+          enum: [flow, peak, distinct, stock]
+          description: How `total` is formed — a sum, the largest period, or the latest value.
+        unit: { type: string }
+        series:
+          type: array
+          items:
+            type: object
+            required: [dims, values, total]
+            properties:
+              dims:
+                type: object
+                additionalProperties: { type: string }
+              values:
+                type: array
+                items: { type: integer, format: int64 }
+              total: { type: integer, format: int64 }
+
+    UsageReportResponse:
+      type: object
+      required: [from, to, grain, buckets, meters]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        grain: { type: string, enum: [hour, day] }
+        buckets:
+          type: array
+          items: { type: string, format: date-time }
+        meters:
+          type: array
+          items: { $ref: '#/components/schemas/UsageMeter' }
+
+    AccountUsageResponse:
+      allOf:
+        - $ref: '#/components/schemas/UsageReportResponse'
+        - type: object
+          required: [projects]
+          properties:
+            projects:
+              type: array
+              items:
+                type: object
+                required: [id, name, totals]
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  totals:
+                    type: object
+                    additionalProperties: { type: integer, format: int64 }
 
     Problem:
       type: object

@@ -210,6 +210,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EntryListResponse' }
+        '304': { $ref: '#/components/responses/NotModified' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -242,6 +243,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EntryGraph' }
+        '304': { $ref: '#/components/responses/NotModified' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -278,6 +280,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EntryGraph' }
+        '304': { $ref: '#/components/responses/NotModified' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -312,6 +315,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EntryGraph' }
+        '304': { $ref: '#/components/responses/NotModified' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -418,6 +422,18 @@ components:
       schema: { type: string }
 
   responses:
+    NotModified:
+      description: |
+        `If-None-Match` named the `ETag` this response would carry: the client's
+        copy is current (doc 41 MT-9). Checked after the credential, so a refused
+        key is refused rather than told its copy is fresh, and before the query,
+        so a revalidation costs almost nothing. `ETag` and `Cache-Control` go out
+        with it, so an environment's freshness restarts. The snapshot
+        implementation answers it; a live ref, whose content moves, does not.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Cache-Control: { $ref: '#/components/headers/CacheControl' }
+
     Problem:
       description: RFC 9457 problem document.
       content:
