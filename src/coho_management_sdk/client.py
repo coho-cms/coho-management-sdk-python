@@ -868,6 +868,7 @@ class Ref:
         self._t = project._t
         self.path = f"{project.path}/refs/{segment(name)}"
         self.types = TypesApi(self)
+        self.traits = TraitsApi(self)
         self.entries = EntriesApi(self)
         self.assets = AssetsApi(self)
 
@@ -886,12 +887,16 @@ class TypesApi:
         self._r = ref
         self._t = ref._t
 
-    def list(self) -> list[m.ContentType]:
-        body = self._t.get(f"{self._r.path}/types").body
+    def list(self, *, effective: bool = False) -> list[m.ContentType]:
+        """Every type on the ref. ``effective`` folds in what each inherits and its traits give."""
+        params = {"resolve": "effective"} if effective else None
+        body = self._t.get(f"{self._r.path}/types", params=params).body
         return [m.ContentType.from_dict(t) for t in (body or {}).get("types", [])]
 
-    def get(self, slug: str) -> m.ContentType:
-        resp = self._t.get(f"{self._r.path}/types/{segment(slug)}")
+    def get(self, slug: str, *, effective: bool = False) -> m.ContentType:
+        """One type as declared, what a ``put`` sends back, or ``effective``: every field it has."""
+        params = {"resolve": "effective"} if effective else None
+        resp = self._t.get(f"{self._r.path}/types/{segment(slug)}", params=params)
         return m.ContentType.from_dict(resp.body, etag=resp.etag)
 
     def put(
@@ -925,6 +930,58 @@ class TypesApi:
             f"{self._r.path}/types/{segment(slug)}",
             params={"confirmDestructive": confirm_destructive or None},
         )
+
+    def _current_etag(self, slug: str) -> str | None:
+        try:
+            return self.get(slug).etag
+        except NotFound:
+            return None
+
+
+class TraitsApi:
+    """Traits on a ref (doc 05 §10): named groups of fields that types take, by ``traits``."""
+
+    def __init__(self, ref: Ref) -> None:
+        self._r = ref
+        self._t = ref._t
+
+    def list(self) -> list[m.Trait]:
+        body = self._t.get(f"{self._r.path}/traits").body
+        return [m.Trait.from_dict(t) for t in (body or {}).get("traits", [])]
+
+    def get(self, slug: str) -> m.Trait:
+        resp = self._t.get(f"{self._r.path}/traits/{segment(slug)}")
+        return m.Trait.from_dict(resp.body, etag=resp.etag)
+
+    def put(
+        self,
+        slug: str,
+        definition: JSON,
+        *,
+        if_match: str | None = None,
+        confirm_destructive: bool = False,
+        force: bool = False,
+    ) -> m.Trait:
+        """Create or update a trait: ``{"_name": …, "fields": […]}`` and nothing else.
+
+        A change reaches every type that takes the trait and every type below them. A
+        destructive one is refused as ``DestructiveSchemaChange``, its context naming
+        ``affectedTypes`` and ``entryCount``, unless ``confirm_destructive`` is set.
+        Updating needs ``if_match``, or ``force=True`` to overwrite what is there.
+        """
+        body: JSON = {"definition": definition}
+        if confirm_destructive:
+            body["confirmDestructive"] = True
+        etag = if_match
+        if etag is None and force:
+            etag = self._current_etag(slug)
+        resp = self._t.put(f"{self._r.path}/traits/{segment(slug)}", body, if_match=etag)
+        return m.Trait.from_dict(resp.body, etag=resp.etag)
+
+    def delete(self, slug: str, *, if_match: str | None = None) -> None:
+        """Tombstone a trait. Refused as ``TraitInUse`` while a type takes it, always."""
+        etag = if_match or self._current_etag(slug)
+        self._t.delete(f"{self._r.path}/traits/{segment(slug)}", if_match=etag)
 
     def _current_etag(self, slug: str) -> str | None:
         try:

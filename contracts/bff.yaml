@@ -413,6 +413,11 @@ paths:
     get:
       tags: [Account management]
       summary: The account's members
+      description: |
+        Admins only. Each member carries `actorId`, their actor in this account,
+        absent until they have acted in it: what puts names to the actor ids
+        that project roles, project tokens and content carry, which the content
+        tier keeps as ids (AU-21). Never `externalId`.
       operationId: listMembers
       parameters:
         - { $ref: '#/components/parameters/account' }

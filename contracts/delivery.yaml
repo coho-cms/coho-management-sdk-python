@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Coho delivery API
-  version: "2.0.0"
+  version: "2.1.0"
   description: |
     Read-only delivery of published content, addressed by `{ref}`.
 
@@ -123,6 +123,25 @@ info:
     and which keys and caches a customer's site uses sit in a content tier above
     this contract.
 
+    ## Asset fields are embedded (2.1.0, doc 40 §14.6)
+
+    An asset field holds files. Unlike a reference it is **embedded**: the entry's
+    field carries each asset as an `Asset` object, never an id to look up, and an
+    asset is never part of the walk, so `depth` keeps meaning entries. An asset is
+    never an entry either: reading its id as one is `ENTRY_NOT_FOUND`, and by-id
+    reports it `absent`.
+
+    The asset is as it is on the ref read, so a tag delivers it as it was at the
+    tag. Its URLs are built when the response is made, so they follow the
+    deployment's asset domain whenever the release was cut.
+
+    **An asset that is gone** on the ref, deleted or never there, is `null` in a
+    single asset field and left out of a list, and either way is named in the
+    response's `warnings`. It is never an error: one missing image must not take a
+    page down. A single asset field can therefore be `null` whatever its type says.
+
+    ⚠️ An asset's URLs are public to anyone holding them.
+
     ## What is deliberately absent
 
     - **No writes.** Delivery is read-only over already-published content.
@@ -160,7 +179,14 @@ paths:
       - name: type
         in: query
         schema: { type: string }
-        description: Filter to one content type, by its slug as resolved on this ref.
+        description: |
+          Filter to a content type, by its slug as resolved on this ref, and the types
+          that extend it (doc 05 I1): `type=page` lists every service page and landing
+          page too. Each entry still names its own `type`.
+      - name: exact
+        in: query
+        schema: { type: boolean }
+        description: With `type`, that type's own entries only, not its descendants'.
       - $ref: '#/components/parameters/locale'
       - $ref: '#/components/parameters/depth'
       - name: order
@@ -466,7 +492,9 @@ components:
             The resolved node body, projected to one locale and flattened. A
             localized field untranslated in this locale is **absent**, not null.
             Reference fields hold ids, never slugs, and are never expanded here:
-            the entries they point at, if within depth, are in `entries`.
+            the entries they point at, if within depth, are in `entries`. Asset
+            fields hold an `Asset`, or a list of them, embedded (2.1.0); a single
+            asset field whose asset is gone is `null`.
 
     EntryGraph:
       type: object
@@ -501,6 +529,62 @@ components:
             `absent`: it is not on this ref — deleted, never existed, or not yet
             merged. The two are different questions and are answered separately.
             Always present, possibly empty.
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/Warning' }
+          description: |
+            What this response could not give in full (2.1.0): an asset field whose
+            asset is gone. Sorted by entry, field and asset. **Absent when there is
+            nothing to say**, never an empty list.
+
+    Warning:
+      type: object
+      required: [code, entry, field, asset]
+      properties:
+        code:
+          type: string
+          enum: [ASSET_MISSING]
+          description: What happened. More codes may come; a client should show an unknown one, not fail.
+        entry: { type: string, format: uuid, description: The entry whose field it is. }
+        field: { type: string, description: The asset field. }
+        asset: { type: string, format: uuid, description: The asset it linked. }
+
+    Asset:
+      type: object
+      required: [id, file]
+      description: |
+        An asset as an asset field embeds it (2.1.0, doc 40 §14.6). Absent values
+        are left out, never `null`.
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        alt: { type: string, description: Alternative text, for an image. }
+        focalPoint:
+          type: object
+          required: [x, y]
+          description: Where a crop centres, as fractions of the width and height.
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+        file:
+          type: object
+          required: [mediaType, byteSize, filename]
+          properties:
+            mediaType: { type: string, description: As sniffed from the bytes at upload. }
+            byteSize: { type: integer, format: int64 }
+            width: { type: integer, description: Raster images only. }
+            height: { type: integer, description: Raster images only. }
+            filename: { type: string }
+        url:
+          type: string
+          format: uri
+          description: The original, from the asset CDN. Absent where the deployment serves none.
+        imageUrl:
+          type: string
+          format: uri
+          description: |
+            Raster images only: the transform base. Append `w`, `h`, `fit`, `fx`,
+            `fy`, `fm`, `q` and `bg` to resize at the edge (doc 40 §6.1).
 
     EntryListResponse:
       allOf:

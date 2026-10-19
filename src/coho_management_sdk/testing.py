@@ -532,6 +532,66 @@ class FakeBff:
                 {"slug": "blogPost", "version": "t2", "definition": body["definition"]}, ETag='"t2"'
             )
 
+        # Traits: `seo`, which blogPost takes, and `unused`, which nothing does.
+        seo = {
+            "slug": "seo",
+            "version": "s1",
+            "definition": {
+                "_name": "SEO",
+                "fields": [{"id": "metaTitle", "type": "text", "max": 70}],
+            },
+        }
+        s.expect_request(f"{r}/traits", method="GET").respond_with_json({"traits": [seo]})
+
+        def get_trait(request: Request) -> Response:
+            self._record(request)
+            return ok(seo, ETag='"s1"')
+
+        def put_trait(request: Request) -> Response:
+            self._record(request)
+            if request.headers.get("If-Match") != '"s1"':
+                return problem(428, "PRECONDITION_REQUIRED", "If-Match required", header="If-Match")
+            body = request.get_json()
+            if not body.get("confirmDestructive") and any(
+                f.get("required") for f in body["definition"].get("fields", [])
+            ):
+                return problem(
+                    400,
+                    "DESTRUCTIVE_SCHEMA_CHANGE",
+                    "would invalidate entries",
+                    errors=[{"path": "metaTitle", "message": "field 'metaTitle' became required"}],
+                    affectedTypes=["blogPost"],
+                    entryCount=5,
+                )
+            return ok(
+                {"slug": "seo", "version": "s2", "definition": body["definition"]}, ETag='"s2"'
+            )
+
+        s.expect_request(f"{r}/traits/seo", method="GET").respond_with_handler(get_trait)
+        s.expect_request(f"{r}/traits/seo", method="PUT").respond_with_handler(put_trait)
+        s.expect_request(f"{r}/traits/seo", method="DELETE").respond_with_handler(
+            lambda req: problem(
+                400, "TRAIT_IN_USE", "Trait 'seo' is taken by blogPost", affectedTypes=["blogPost"]
+            )
+        )
+        s.expect_request(f"{r}/traits/unused", method="GET").respond_with_handler(
+            lambda req: ok(
+                {
+                    "slug": "unused",
+                    "version": "u1",
+                    "definition": {"_name": "Unused", "fields": []},
+                },
+                ETag='"u1"',
+            )
+        )
+        s.expect_request(f"{r}/traits/unused", method="DELETE").respond_with_handler(
+            lambda req: (
+                Response(status=204)
+                if req.headers.get("If-Match") == '"u1"'
+                else problem(428, "PRECONDITION_REQUIRED", "If-Match required", header="If-Match")
+            )
+        )
+
         s.expect_request(f"{r}/types/blogPost", method="GET").respond_with_handler(get_type)
         s.expect_request(f"{r}/types/blogPost", method="PUT").respond_with_handler(put_type)
         s.expect_request(f"{r}/types/newType", method="GET").respond_with_handler(

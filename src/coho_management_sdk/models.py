@@ -437,6 +437,54 @@ class ContentType:
         """
         return str(self.raw.get("kind") or self.definition.get("kind") or "content")
 
+    @property
+    def extends(self) -> str | None:
+        """The slug of the type this one extends, or ``None`` for a root."""
+        parent = self.definition.get("extends")
+        return parent if isinstance(parent, str) else None
+
+    @property
+    def abstract(self) -> bool:
+        """Whether no entry is of this type itself, only of the types that extend it."""
+        return self.definition.get("abstract") is True
+
+    @property
+    def traits(self) -> list[str]:
+        """The traits it takes itself, by slug, in order. Its ancestors' are theirs."""
+        return [str(t) for t in _list(self.definition, "traits")]
+
+
+@dataclass(slots=True)
+class Trait:
+    """A trait: a named group of fields that types take (doc 05 §10). Never a type.
+
+    Carries its ``etag`` for the next ``put``.
+    """
+
+    slug: str
+    version: str
+    definition: JSON
+    etag: str | None = None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON, etag: str | None = None) -> Trait:
+        return cls(
+            slug=str(raw.get("slug", "")),
+            version=str(raw.get("version", "")),
+            definition=dict(raw.get("definition") or {}),
+            etag=etag,
+            raw=raw,
+        )
+
+    @property
+    def name(self) -> str | None:
+        return self.definition.get("_name")
+
+    @property
+    def fields(self) -> list[JSON]:
+        return _list(self.definition, "fields")
+
 
 @dataclass(slots=True)
 class Entry:

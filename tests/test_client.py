@@ -331,3 +331,46 @@ def test_with_a_project_token_an_account_id_is_used_without_asking_me(
     assert not any(r.path == "/api/v1/me" for r in bff.requests)
     with pytest.raises(e.CohoError, match="account's id"):
         coho.account("acme")
+
+
+def test_traits_are_read_written_and_kept_while_in_use(coho: Coho) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev")
+    assert [t.slug for t in dev.traits.list()] == ["seo"]
+    seo = dev.traits.get("seo")
+    assert (seo.name, seo.etag, [f["id"] for f in seo.fields]) == ("SEO", '"s1"', ["metaTitle"])
+
+    required = {"_name": "SEO", "fields": [{"id": "metaTitle", "type": "text", "required": True}]}
+    with pytest.raises(e.DestructiveSchemaChange) as refused:
+        dev.traits.put("seo", required, if_match=seo.etag)
+    # A trait's change reaches every type that takes it, and says how far.
+    assert refused.value.context["affectedTypes"] == ["blogPost"]
+    assert refused.value.context["entryCount"] == 5
+    assert (
+        dev.traits.put("seo", required, if_match=seo.etag, confirm_destructive=True).etag == '"s2"'
+    )
+
+    with pytest.raises(e.TraitInUse) as in_use:
+        dev.traits.delete("seo")
+    assert in_use.value.context["affectedTypes"] == ["blogPost"]
+    dev.traits.delete("unused")
+
+
+def test_a_type_names_its_parent_and_its_traits() -> None:
+    from coho_management_sdk.models import ContentType
+
+    article = ContentType.from_dict(
+        {
+            "slug": "article",
+            "version": "a1",
+            "definition": {
+                "_name": "Article",
+                "extends": "page",
+                "abstract": True,
+                "traits": ["seo", "social"],
+                "fields": [],
+            },
+        }
+    )
+    assert (article.extends, article.abstract, article.traits) == ("page", True, ["seo", "social"])
+    root = ContentType.from_dict({"slug": "page", "version": "p1", "definition": {"fields": []}})
+    assert (root.extends, root.abstract, root.traits) == (None, False, [])

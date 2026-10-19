@@ -689,6 +689,14 @@ paths:
       tags: [Types]
       summary: Content types as resolved on this ref
       operationId: listTypes
+      parameters:
+        - name: resolve
+          in: query
+          schema: { type: string, enum: [effective] }
+          description: |
+            `effective`: each type as `getType` returns it with `resolve=effective`,
+            every field it inherits folded in with `from`. A type whose lineage is
+            broken on the ref is returned as declared.
       responses:
         '200':
           description: OK
@@ -709,6 +717,14 @@ paths:
       tags: [Types]
       summary: One content type
       operationId: getType
+      parameters:
+        - name: resolve
+          in: query
+          schema: { type: string, enum: [effective] }
+          description: |
+            `effective`: every field the type has, its ancestors' first, overrides
+            merged in, each with `from: {type, overriddenBy?}` (doc 05 §9). Without it,
+            the definition as declared, `extends` by slug.
       responses:
         '200':
           description: OK
@@ -720,7 +736,7 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
     put:
       tags: [Types]
-      summary: Create or update a content type
+      summary: Create or update a content or component type
       description: |
         Requires `content:write`. On update, `If-Match` is required — a missing
         precondition is `428`, a stale one `412`.
@@ -771,6 +787,127 @@ paths:
         '204': { description: Deleted }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/traits:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Types]
+      summary: Traits on this ref
+      description: |
+        Named groups of fields that types take (doc 05 §10). A trait is never a type:
+        no entry is of one, and `?type=` and `of` cannot name one.
+      operationId: listTraits
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraitListResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/traits/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Types]
+      summary: One trait
+      operationId: getTrait
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraitResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Types]
+      summary: Create or update a trait
+      description: |
+        Requires `content:write`. On update, `If-Match` is required.
+
+        A trait's change is a change to every type that takes it, and to every type
+        below those (doc 05 §10, T8): each must still fold, and a destructive change to
+        any is refused as `DESTRUCTIVE_SCHEMA_CHANGE`, with `affectedTypes` and
+        `entryCount`, unless `confirmDestructive` is set.
+      operationId: putTrait
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutTraitRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraitResponse' }
+        '200':
+          description: Updated
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraitResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Types]
+      summary: Tombstone a trait
+      description: |
+        Refused as `TRAIT_IN_USE`, naming the types in `affectedTypes`, while any type
+        takes it. No confirmation overrides that: remove it from those types first.
+      operationId: deleteTrait
+      parameters:
+        - $ref: '#/components/parameters/ifMatch'
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/entry-counts:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+    get:
+      tags: [Types]
+      summary: How many entries each content type has on this ref
+      description: |
+        Every content type on the ref by slug, with how many entries are of that type
+        itself, 0 for none: the count `?type={slug}&exact=true` would list. A base
+        type's list also holds its descendants' entries, which a client adds up from
+        each type's `extends`. One call for the whole ref, for a navigation that shows
+        a count beside every type.
+      operationId: getEntryCounts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [counts]
+                properties:
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer, minimum: 0 }
         '404': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}/refs/{ref}/type-model:
@@ -833,7 +970,11 @@ paths:
         - name: type
           in: query
           schema: { type: string }
-          description: Filter to one content type, by slug.
+          description: Filter to a content type, by slug, and the types that extend it (doc 05 I1).
+        - name: exact
+          in: query
+          schema: { type: boolean }
+          description: With `type`, that type's own entries only, not its descendants'.
         - $ref: '#/components/parameters/limit'
         - $ref: '#/components/parameters/offset'
       responses:
@@ -1155,6 +1296,48 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/asset-media-types:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    get:
+      tags: [Assets]
+      summary: The media types Coho stores, and the wildcards an asset field may accept
+      description: |
+        The one list (doc 40 §14.2). An asset field's `accept` takes members of
+        `mediaTypes`, or keys of `families`; anything else is `SCHEMA_INVALID`.
+        A family stands for exactly the members listed with it.
+      operationId: listAssetMediaTypes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetMediaTypesResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/refs/{ref}/assets/{id}/references:
+    parameters:
+      - $ref: '#/components/parameters/project'
+      - $ref: '#/components/parameters/ref'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Assets]
+      summary: What links this asset on this ref
+      description: |
+        The entries whose asset fields name it. Answered whether or not the asset
+        still resolves here, as for entries: a deleted asset can still be linked.
+      operationId: getAssetReferences
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferencesResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}/refs/{ref}/assets/{id}:
     parameters:
@@ -1636,6 +1819,12 @@ components:
         depth: { type: integer }
         maxDepth: { type: integer }
         entryCount: { type: integer }
+        affectedTypes:
+          type: array
+          items: { type: string }
+          description: |
+            DESTRUCTIVE_SCHEMA_CHANGE on a type update: the type and every type that
+            extends it, which the change reaches (doc 05 §5.4).
         invalidEntries:
           type: array
           description: For `TAG_CONTENT_INVALID`, the failing entries by slug, at most 100. `entryCount` has the total.
@@ -2120,6 +2309,12 @@ components:
         slug: { type: string }
         version: { type: string, format: uuid }
         definition: { type: object }
+        kind:
+          type: string
+          enum: [content, component]
+          description: |
+            What the definition's documents are: entries, or repeater items (doc 40
+            §14.10). Fixed when the type is created.
 
     TypeListResponse:
       type: object
@@ -2128,6 +2323,37 @@ components:
         types:
           type: array
           items: { $ref: '#/components/schemas/TypeResponse' }
+
+    TraitResponse:
+      type: object
+      required: [slug, version, definition]
+      properties:
+        slug: { type: string }
+        version: { type: string, format: uuid }
+        definition:
+          type: object
+          description: '`{_name, fields[]}`, in a type''s field shape (doc 05 §10, T1).'
+
+    TraitListResponse:
+      type: object
+      required: [traits]
+      properties:
+        traits:
+          type: array
+          items: { $ref: '#/components/schemas/TraitResponse' }
+
+    PutTraitRequest:
+      type: object
+      required: [definition]
+      properties:
+        definition:
+          type: object
+          description: |
+            `{_name, fields[]}` and nothing else: a trait has no `extends`, `abstract`,
+            `overrides`, `kind` or `traits` (T1).
+        confirmDestructive:
+          type: boolean
+          default: false
 
     TypeModel:
       type: object
@@ -2151,6 +2377,10 @@ components:
           type: object
           description: Content types keyed by slug.
           additionalProperties: { type: object }
+        components:
+          type: object
+          description: Since 1.2, component types keyed by slug. A repeater's `of` names its keys.
+          additionalProperties: { type: object }
         warnings:
           type: array
           items: { type: object }
@@ -2161,7 +2391,15 @@ components:
       properties:
         definition:
           type: object
-          description: '`{_name, fields[]}`. Field ids must start with a letter — `_` is reserved.'
+          description: |
+            `{_name, kind?, extends?, abstract?, traits?, fields[], overrides?}`. Field ids
+            must start with a letter — `_` is reserved. `kind` is `content` (the default) or
+            `component`, for the items of a repeater; it cannot change once the type
+            exists. `extends` names a parent of the same kind by slug; `traits` names, in
+            order, the traits whose fields it takes (doc 05 §10); `fields` are the type's
+            own, and `overrides`, by field id, may only tighten what it inherits or takes
+            from a trait (`FIELD_INHERITED` otherwise). A field id that comes from two
+            places is `FIELD_CONFLICT`. `abstract` types take no entries (doc 05 §9).
         confirmDestructive:
           type: boolean
           description: Phase two of R1.3. Without it, a destructive change is refused.
@@ -2225,6 +2463,12 @@ components:
         slug: { type: string }
         version: { type: string, format: uuid }
         fields: { type: object }
+        typeClosure:
+          type: array
+          items: { type: string, format: uuid }
+          description: |
+            On a single entry's read: the schema this version was validated against,
+            its type's version first, then each ancestor's (doc 05 N6).
 
     PageDto:
       type: object
@@ -2355,6 +2599,21 @@ components:
           description: |
             Raster images only: the transform base. Append `?w=`, `h`, `fit`,
             `fx`, `fy`, `fm`, `q`, `bg` (doc 40 §6.1).
+
+    AssetMediaTypesResponse:
+      type: object
+      required: [mediaTypes, families]
+      properties:
+        mediaTypes:
+          type: array
+          items: { type: string }
+          example: [image/png, image/jpeg, application/pdf]
+        families:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: Each wildcard, such as `image/*`, with the members it stands for.
 
     AssetListResponse:
       type: object

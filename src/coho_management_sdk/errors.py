@@ -25,6 +25,8 @@ _CONTEXT_FIELDS = (
     "depth",
     "maxDepth",
     "entryCount",
+    # A destructive type or trait change, or a trait in use: the types it reaches (doc 05 §5.4).
+    "affectedTypes",
     "invalidEntries",
     "expectedVersion",
     "currentVersion",
@@ -193,6 +195,30 @@ class SlugConflict(CohoError):
 
 class TypeInUse(CohoError):
     code = "TYPE_IN_USE"
+
+
+class FieldInherited(SchemaInvalid):
+    """A type declares or loosens a field it inherits; tighten it under ``overrides`` instead."""
+
+    code = "FIELD_INHERITED"
+
+
+class FieldConflict(SchemaInvalid):
+    """A field id from two places: a trait and a parent, two traits, or a trait and the type."""
+
+    code = "FIELD_CONFLICT"
+
+
+class TypeAbstract(CohoError):
+    """An entry of an abstract type: entries are of the types that extend it."""
+
+    code = "TYPE_ABSTRACT"
+
+
+class TraitInUse(CohoError):
+    """A trait types still take; ``affectedTypes`` in the context names them. Never overridden."""
+
+    code = "TRAIT_IN_USE"
 
 
 class RefNameTaken(CohoError):
@@ -408,6 +434,10 @@ _BY_CODE: dict[str, type[CohoError]] = {
         LastLogin,
         AlreadyRegistered,
         AccountClosed,
+        FieldInherited,
+        FieldConflict,
+        TypeAbstract,
+        TraitInUse,
     )
 }
 for _code in ("INVITATION_USED", "INVITATION_ACCEPTED", "INVITATION_REVOKED", "INVITATION_EXPIRED"):

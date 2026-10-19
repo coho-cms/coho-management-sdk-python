@@ -11,6 +11,15 @@ All notable changes to `coho-management-sdk`. The format follows
 - `ContentType.kind`: `content`, or `component` for a type whose documents are repeater
   items (coho-data doc 40 §14.10). A type from a server without component types reads as
   `content`.
+- Traits (coho-data doc 05 §10): `ref.traits` lists, reads, writes and deletes them, and
+  `Trait` is one, a named group of fields types take. A trait's `put` is refused as
+  `DestructiveSchemaChange` when it would cost a type that takes it content, unless
+  `confirm_destructive`; its delete is refused as `TraitInUse` while any type takes it.
+- Type inheritance on `ContentType`: `extends`, `abstract`, and `traits`, the traits it
+  takes itself. `types.get` and `types.list` take `effective=True` for every field a type
+  has, inherited and from traits, each with `from`.
+- `FieldInherited`, `FieldConflict`, `TypeAbstract` and `TraitInUse` for those refusals, and
+  `affectedTypes` in an error's `context`: the types a refused change reaches.
 
 ### Changed
 
