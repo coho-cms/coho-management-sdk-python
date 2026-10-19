@@ -168,6 +168,25 @@ def test_type_put_create_vs_update(coho: Coho, bff: FakeBff) -> None:
         dev.types.put("blogPost", existing.definition)
 
 
+def test_a_type_says_whether_it_is_a_content_or_a_component_type() -> None:
+    from coho_management_sdk.models import ContentType
+
+    citation = ContentType.from_dict(
+        {
+            "slug": "citation",
+            "version": "c1",
+            "kind": "component",
+            "definition": {"_name": "Citation", "kind": "component", "fields": []},
+        }
+    )
+    assert citation.kind == "component"
+    # A server from before typed repeaters sends no kind: every type was a content type.
+    assert (
+        ContentType.from_dict({"slug": "post", "version": "p1", "definition": {"fields": []}}).kind
+        == "content"
+    )
+
+
 def test_diff_and_merge_conflict_then_resolve(coho: Coho, bff: FakeBff) -> None:
     project = coho.account("acme").project(PROJECT)
     d = project.diff("v0.0.x", "feature/pricing")

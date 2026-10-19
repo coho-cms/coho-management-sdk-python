@@ -6,6 +6,12 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `ContentType.kind`: `content`, or `component` for a type whose documents are repeater
+  items (coho-data doc 40 §14.10). A type from a server without component types reads as
+  `content`.
+
 ### Changed
 
 - After a browser sign-in, the loopback listener sends the browser on to the sign-in

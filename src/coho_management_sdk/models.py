@@ -429,6 +429,14 @@ class ContentType:
     def fields(self) -> list[JSON]:
         return _list(self.definition, "fields")
 
+    @property
+    def kind(self) -> str:
+        """``content``, or ``component`` for the items of a repeater. Fixed once the type exists.
+
+        Servers before typed repeaters send no ``kind``; their types are all content types.
+        """
+        return str(self.raw.get("kind") or self.definition.get("kind") or "content")
+
 
 @dataclass(slots=True)
 class Entry:
