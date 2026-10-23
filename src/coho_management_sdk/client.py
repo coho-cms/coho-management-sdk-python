@@ -727,9 +727,22 @@ class TiersApi:
         return [m.Tier.from_dict(t) for t in (body or {}).get("tiers", [])]
 
     def create(self, tier_id: str, *, resolves: str, ord: int) -> m.Tier:
-        """``owner`` only. ``resolves`` (``live``/``snapshot``) is immutable afterwards."""
+        """``owner`` only. ``resolves`` (``live``/``snapshot``) is immutable afterwards.
+
+        ``ord`` is the position to insert at: a taken one moves that tier and the ones
+        after it along by one, and one past the end is the end. The tier comes back at
+        the position it got.
+        """
         body = {"id": tier_id, "resolves": resolves, "ord": ord}
         return m.Tier.from_dict(self._t.post(f"{self._p.path}/tiers", body).body)
+
+    def move(self, tier_id: str, ord: int) -> m.Tier:
+        """``owner`` only. Moves the tier to ``ord``; the tiers it passes shift by one.
+
+        One past the end is the end. Positions always run 0 to n-1.
+        """
+        resp = self._t.patch(f"{self._p.path}/tiers/{segment(tier_id)}", {"ord": ord})
+        return m.Tier.from_dict(resp.body)
 
     def delete(self, tier_id: str) -> None:
         self._t.delete(f"{self._p.path}/tiers/{segment(tier_id)}")

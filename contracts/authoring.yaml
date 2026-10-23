@@ -172,7 +172,12 @@ paths:
     get:
       tags: [Refs]
       summary: Every ref in the project
-      description: One namespace across branches, tags and environments (D15).
+      description: |
+        One namespace across branches, tags and environments (D15).
+
+        A tag carries the line it was cut from, the sequence it froze, and the
+        state of its artifact — all three read in the same statement as the
+        listing, so a project's releases cost one query rather than one per tag.
       operationId: listRefs
       responses:
         '200':
@@ -190,6 +195,9 @@ paths:
       tags: [Refs]
       summary: One ref
       description: |
+        A tag answers with its coordinate (`taggedFrom`, `at`) and its `snapshot`
+        state, as doc 10 §4.6.8 asks; the listing carries the same three.
+
         An **unset** environment is a `200` here with a null target — the ref
         exists, it just points nowhere yet. That deliberately differs from the
         content endpoints, where the same ref is a `404` because there is nothing
@@ -253,7 +261,8 @@ paths:
       description: |
         O(1) and copies nothing (N3). Requires `branch:create`; a **version**
         branch additionally requires `branch:create_version` (Q10), re-checked in
-        the handler once `kind` is parsed.
+        the handler once the kind is known — which, since the name decides it
+        (doc 00 §4.2.1), means a name beginning `v` carries that grant with it.
       operationId: createBranch
       requestBody:
         required: true
@@ -364,6 +373,11 @@ paths:
 
         `resolves` is immutable after creation (M6-2): flipping it on a populated
         tier would leave every environment in it pointing at the wrong kind of ref.
+
+        `ord` is the position to insert at (M6-15). Positions run 0 to n-1 with no
+        gaps: a taken one shifts that tier and every one after it by one, so a tier
+        created at 3 in the seeded pipeline puts `prod` at 4. A position past the
+        end is the end, and the response carries the position the tier got.
       operationId: createTier
       requestBody:
         required: true
@@ -387,12 +401,39 @@ paths:
         in: path
         required: true
         schema: { type: string }
+    patch:
+      tags: [Promotion]
+      summary: Move a tier
+      description: |
+        Requires `workflow:write` (M6-7). Moves the tier to `ord`, shifting the
+        tiers between its old position and its new one by one (M6-15). A position
+        past the end is the end. Only the position can change: `resolves` is
+        immutable (M6-2), and the id is what grants name.
+
+        Ordering is advisory (M6-3), so a move changes no promotion's outcome. It
+        changes which earlier tiers the skipped-tier warning counts.
+      operationId: moveTier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTierRequest' }
+      responses:
+        '200':
+          description: The tier at its new position
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TierDto' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
     delete:
       tags: [Promotion]
       summary: Remove an empty tier
       description: |
         Requires `workflow:write`. Only an empty tier may be deleted —
-        `TIER_NOT_EMPTY` names the environments still holding it open.
+        `TIER_NOT_EMPTY` names the environments still holding it open. The
+        tiers after it move up one, so positions keep running 0 to n-1 (M6-15).
       operationId: deleteTier
       responses:
         '204': { description: Deleted }
@@ -1891,6 +1932,31 @@ components:
 
             Not to be confused with `RefHistoryDto.reason`, which records why one
             promotion happened. This one is standing and revisable.
+        taggedFrom:
+          type: string
+          description: |
+            **Tags only.** The version branch the tag was cut from. Round-trips
+            with `TagResponse.ref`.
+        at:
+          type: integer
+          format: int64
+          description: |
+            **Tags only.** The sequence the tag froze — a tag *is* `(taggedFrom,
+            at)`. Round-trips with `TagResponse.at`.
+        snapshot:
+          type: string
+          enum: [building, ready, failed, cancelled, evicted]
+          description: |
+            **Tags only.** The state of the tag's artifact (M4-25), which is what
+            `promote` gates on: only `ready` can be promoted to a
+            snapshot-resolving environment, and anything else is
+            `SNAPSHOT_NOT_READY` with the same word.
+
+            `building` means retry shortly, `evicted` means a rebuild has been
+            enqueued and retry will succeed, and `failed` and `cancelled` mean an
+            operator must act. A tag with no snapshot row reads `building`, which
+            is what the promotion gate already takes it for: the reconciler
+            enqueues such a tag, so "no row yet" and "queued" are one fact.
 
     UpdateRefRequest:
       type: object
@@ -1915,14 +1981,30 @@ components:
         description:
           type: string
           maxLength: 2000
-        name: { type: string }
+        name:
+          type: string
+          description: |
+            The name decides what kind of branch this is (doc 00 §4.2.1):
+
+            - a name with a **prefix segment** — `feature/pricing`, `bug/broken-cta`,
+              `hotfix/checkout` — is a feature branch, and the prefix is yours: Coho
+              keeps no list of allowed ones;
+            - a name beginning **`v`** is a version branch, and what follows the `v` is
+              your convention — `v1.2.x`, `v2026.08` — as a tag's shape is (M4-3f).
+
+            Anything else is `INVALID_BRANCH_NAME` rather than a guess. Where both could
+            apply, the prefix wins: `hotfix/v1.2.1` is a feature branch.
         from:
           type: string
           description: A branch tip or a tag — branching from either costs the same (R3.10).
         kind:
           type: string
           enum: [feature_branch, version_branch]
-          default: feature_branch
+          description: |
+            Optional, and a check rather than a choice: the name decides. Sent, it must
+            agree with the name, else `INVALID_BRANCH_NAME` — a client that believes it
+            is cutting a release line should be told when its name says otherwise, rather
+            than discover it at the first tag.
         at:
           type: integer
           format: int64
@@ -2004,7 +2086,19 @@ components:
         ord:
           type: integer
           minimum: 0
-          description: Display order. Advisory — it does not gate promotion (M6-3).
+          description: |
+            The position to insert at (M6-15): a taken one shifts the tiers from
+            there on by one, and one past the end is the end. Advisory — it does
+            not gate promotion (M6-3).
+
+    UpdateTierRequest:
+      type: object
+      required: [ord]
+      properties:
+        ord:
+          type: integer
+          minimum: 0
+          description: The position to move to. One past the end is the end.
 
     TierDto:
       type: object

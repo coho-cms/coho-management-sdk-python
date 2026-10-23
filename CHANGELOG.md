@@ -8,6 +8,8 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `tiers.move(tier_id, ord)`: moves a tier in the pipeline, shifting the tiers it passes by
+  one (coho-data doc 11, M6-15). Needs a server with `PATCH …/tiers/{id}`.
 - `ContentType.kind`: `content`, or `component` for a type whose documents are repeater
   items (coho-data doc 40 §14.10). A type from a server without component types reads as
   `content`.
@@ -23,6 +25,9 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Changed
 
+- `tiers.create` inserts: an `ord` another tier holds moves that tier and the ones after it
+  along, where it was refused with `TIER_ORDER_TAKEN`, and one past the end is the end
+  (coho-data doc 11, M6-15). Positions always run 0 to n-1.
 - After a browser sign-in, the loopback listener sends the browser on to the sign-in
   service's own "Signed in" page (`/cli/signed-in`, or `/cli/sign-in-failed`) instead of
   drawing an unstyled page itself, so the last page matches the rest. The code stays with

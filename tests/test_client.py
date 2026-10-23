@@ -243,6 +243,14 @@ def test_rollback_uses_history_and_expected_target(coho: Coho, bff: FakeBff) -> 
     }
 
 
+def test_tier_move_sends_the_position_alone(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    tier = project.tiers.move("prod", 1)
+    assert tier.id == "prod" and tier.ord == 1
+    assert bff.last().method == "PATCH"
+    assert bff.last().get_json() == {"ord": 1}
+
+
 def test_roles_and_keys(coho: Coho, bff: FakeBff) -> None:
     project = coho.account("acme").project(PROJECT)
     assert project.roles.list()[0].role == "owner"

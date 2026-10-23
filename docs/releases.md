@@ -127,9 +127,14 @@ for x in h.history:  x.from_target, x.to_target, x.reason, x.actor, x.at
 
 ```python
 site.tiers.list()                                  # [Tier]: id, resolves, ord, promote_permission, environments
-site.tiers.create("qa2", resolves="snapshot", ord=15)
-site.tiers.delete("qa2")                           # TIER_NOT_EMPTY otherwise
+site.tiers.create("uat", resolves="snapshot", ord=3)    # before prod, which moves to 4
+site.tiers.move("uat", 1)                          # the tiers it passes shift by one
+site.tiers.delete("uat")                           # TIER_NOT_EMPTY otherwise; the gap closes
 ```
+
+A tier's `ord` is its position, 0 to n-1 with no gaps. Creating or moving a tier to a taken
+position moves that tier and the ones after it along, and one past the end is the end.
+Adding a tier needs a plan with room for it (Enterprise; Free and Site have fixed pipelines).
 
 ## Roles (owner)
 

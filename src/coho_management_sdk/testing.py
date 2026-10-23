@@ -412,6 +412,21 @@ class FakeBff:
             }
         )
 
+        # --- tiers ---
+        def move_tier(request: Request) -> Response:
+            self._record(request)
+            return ok(
+                {
+                    "id": "prod",
+                    "resolves": "snapshot",
+                    "ord": min(request.get_json()["ord"], 3),
+                    "promotePermission": "promote:prod",
+                    "environments": ["prod"],
+                }
+            )
+
+        s.expect_request(f"{p}/tiers/prod", method="PATCH").respond_with_handler(move_tier)
+
         # --- roles & keys ---
         s.expect_request(f"{p}/roles", method="GET").respond_with_json(
             {

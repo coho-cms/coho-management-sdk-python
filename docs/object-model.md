@@ -18,7 +18,7 @@ Coho
         ├── tags: TagsApi          list, create
         ├── diff(from, to), merge(source, target, …)
         ├── environments: EnvironmentsApi   list, get, create, promote, unset, delete, history, rollback
-        ├── tiers: TiersApi        list, create, delete
+        ├── tiers: TiersApi        list, create, move, delete
         ├── roles: RolesApi        list, grant, revoke
         ├── delivery_keys: DeliveryKeysApi  list, issue, revoke, set_public
         ├── export(ref, …), preview(ref) → Preview

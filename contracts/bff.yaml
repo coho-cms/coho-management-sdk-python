@@ -363,7 +363,11 @@ paths:
     get:
       tags: [Account management]
       summary: The plan catalogue
+      description: |
+        Public: the same for everybody, and read by the plan choice before
+        sign-up. `?includeRetired=true` adds retired and internal plans.
       operationId: listPlans
+      security: []
       responses:
         '200': { description: "`:api-auth` `GET /v1/plans`" }
 
@@ -447,6 +451,116 @@ paths:
         - { $ref: '#/components/parameters/account' }
       responses:
         '200': { description: "`:api-auth` `GET /v1/accounts/{id}/entitlements`" }
+
+  /api/v1/accounts/{account}/subscription:
+    get:
+      tags: [Account management]
+      summary: The plan, the period paid for, and a change waiting for its end
+      operationId: getSubscription
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/subscription`" }
+    put:
+      tags: [Account management]
+      summary: Choose the account's plan
+      description: |
+        The account's own admin choosing a plan on the card. The plan it is on
+        keeps it, cancelling a change waiting for the period's end. A move down
+        keeps the month already paid for and switches when it ends (at once with
+        no period paid). A move up to a paid plan is `PAYMENT_REQUIRED`: it goes
+        through `POST …/checkout`, prorated. A move onto a plan the account
+        already exceeds goes through: nothing is removed, and growth is refused
+        with `PLAN_LIMIT` until it is under. An internal plan is
+        `PLAN_NOT_SELF_SERVE`.
+      operationId: setSubscription
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan]
+              properties:
+                plan: { type: string, example: site@1 }
+      responses:
+        '200': { description: "`:api-auth` `PUT /v1/accounts/{id}/subscription`: the account's entitlements after the move" }
+
+  /api/v1/accounts/{account}/checkout:
+    post:
+      tags: [Account management]
+      summary: Start paying for a plan
+      description: |
+        The account's admin starts the billing provider's hosted checkout for a
+        paid plan. Nothing changes on the account until the payment completes.
+        `url` in the answer is where to send the browser.
+      operationId: startCheckout
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, successUrl, cancelUrl]
+              properties:
+                plan: { type: string, example: site@2 }
+                quantity: { type: integer, minimum: 1, description: "Projects, for a per-project price" }
+                successUrl: { type: string, example: /acme/welcome?paid=1 }
+                cancelUrl: { type: string, example: /acme/welcome?cancelled=1 }
+      responses:
+        '201': { description: "`:api-auth` `POST /v1/accounts/{id}/checkout`" }
+
+  /api/v1/billing/checkouts/{checkout}:
+    get:
+      tags: [Account management]
+      summary: A checkout, as the billing provider has it now
+      description: |
+        Read by the test checkout page, by the confirmation page for a move between
+        paid plans, and by the page Stripe returns to. A Stripe checkout that has been
+        paid is applied here as well as by the webhook, so the plan shows at once.
+      operationId: getCheckout
+      parameters:
+        - { name: checkout, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/billing/checkouts/{checkout}`" }
+
+  /api/v1/billing/checkouts/{checkout}/complete:
+    post:
+      tags: [Account management]
+      summary: Pay a checkout
+      description: |
+        The test page's Pay with the mock; with Stripe, the charge to the card on file
+        for a move between paid plans. Completing twice applies nothing new. A charge
+        the card's bank wants confirmed answers `open` with `paymentUrl`.
+      operationId: completeCheckout
+      parameters:
+        - { name: checkout, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "`:api-auth` `POST /v1/billing/checkouts/{checkout}/complete`" }
+
+  /api/v1/billing/stripe/webhook:
+    post:
+      tags: [Account management]
+      summary: Stripe's events
+      description: |
+        No session and no token: the `Stripe-Signature` header is the credential, which
+        `:api-auth` checks against the endpoint's signing secret. The body is relayed
+        byte for byte so the signature still matches. Not found while billing is the mock.
+      operationId: stripeWebhook
+      security: []
+      parameters:
+        - { name: Stripe-Signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: "`:api-auth` `POST /v1/billing/stripe/webhook`" }
 
   /api/v1/accounts/{account}/invitations:
     get:
