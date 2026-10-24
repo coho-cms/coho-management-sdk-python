@@ -8,6 +8,11 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `Project.rename(name)`: renames a project, returning the name as stored (coho-data doc 39
+  §11.1). An account admin's, and allowed while the project is archived. Nothing else about the
+  project changes, so held ids, delivery paths and keys stay valid. ⚠️ A name the CLI remembered
+  with `Profile.remember_project` is stale afterwards; the registry is keyed by name and this does
+  not reach it. Needs a server with `PATCH …/projects/{project}`.
 - `tiers.move(tier_id, ord)`: moves a tier in the pipeline, shifting the tiers it passes by
   one (coho-data doc 11, M6-15). Needs a server with `PATCH …/tiers/{id}`.
 - `ContentType.kind`: `content`, or `component` for a type whose documents are repeater
@@ -25,6 +30,10 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Changed
 
+- `Profile.project_name` reports the **newest** name a project was remembered under, where
+  before it was the one remembered first. Several names may point at one project on purpose
+  (`remember_project` leaves the others alone), but a project renamed anywhere would
+  otherwise keep being reported under a name it no longer has.
 - `tiers.create` inserts: an `ord` another tier holds moves that tier and the ones after it
   along, where it was refused with `TIER_ORDER_TAKEN`, and one past the end is the end
   (coho-data doc 11, M6-15). Positions always run 0 to n-1.

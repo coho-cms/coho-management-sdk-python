@@ -406,6 +406,22 @@ class Project:
     def name(self) -> str:
         return self.info().name
 
+    def rename(self, name: str) -> str:
+        """Rename it, returning the name as stored (trimmed). An account admin's.
+
+        Nothing else about the project changes: its id, its delivery paths and its keys
+        are untouched, so held references stay valid. An archived project can still be
+        renamed. Raises on a blank name, and on one another project in the account holds
+        (``PROJECT_NAME_TAKEN``, ignoring case).
+
+        ⚠️ A name the CLI remembered in a profile is now stale — the registry
+        (`Profile.remember_project`) is keyed by name, and this does not reach it.
+        """
+        stored = str((self._t.patch(self.path, {"name": name}).body or {}).get("name", ""))
+        # Re-read on the next `info()`: the cached document still has the old name.
+        self._info = None
+        return stored
+
     def ref(self, name: str) -> Ref:
         return Ref(self, name)
 

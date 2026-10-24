@@ -166,7 +166,18 @@ class Profile:
     # -- the local project registry ----------------------------------------------
 
     def remember_project(self, account_id: str, name: str, project_id: str) -> None:
-        self.projects.setdefault(account_id, {})[name] = project_id
+        """Remember ``name`` for ``project_id``, as the newest name it is known by.
+
+        Several names may point at one project on purpose — ``coho project register``
+        exists to add one — so this leaves the others alone. It does make this the name
+        `project_name` reports: a caller that has just read a name from the server must
+        not be told afterwards that the project is called something it no longer is.
+        """
+        table = self.projects.setdefault(account_id, {})
+        # Re-inserted rather than assigned, so the mapping's order is "oldest first" and
+        # the newest name wins the reverse lookup below.
+        table.pop(name, None)
+        table[name] = project_id
 
     def forget_project(self, account_id: str, name_or_id: str) -> bool:
         table = self.projects.get(account_id, {})
@@ -181,7 +192,13 @@ class Profile:
         return self.projects.get(account_id, {}).get(name_or_id, name_or_id)
 
     def project_name(self, account_id: str, project_id: str) -> str | None:
-        for name, pid in self.projects.get(account_id, {}).items():
+        """The newest name remembered for this project, or ``None``.
+
+        Newest, not first: a project that has been renamed leaves whatever it was called
+        before in the table until something drops it, and the stale one must not be what
+        a context or a status line claims the project is called.
+        """
+        for name, pid in reversed(self.projects.get(account_id, {}).items()):
             if pid == project_id:
                 return name
         return None

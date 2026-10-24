@@ -81,4 +81,6 @@ config.current_profile = "staging"
 config.save()                              # atomic, mode 0600
 ```
 
-`Profile.resolve_project(account_id, name_or_id)` turns a registry name into an id.
+`Profile.resolve_project(account_id, name_or_id)` turns a registry name into an id. A
+project may be remembered under several names, all of which resolve; `project_name` gives
+the newest of them, so a project renamed elsewhere is not reported under its old name.

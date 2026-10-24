@@ -12,7 +12,7 @@ Coho
     ├── invitations: InvitationsApi   list, create, revoke
     ├── projects: ProjectsApi      create(name) → Project, get(id) → Project
     └── project(id) → Project
-        ├── id, name, info()
+        ├── id, name, info(), rename(name)
         ├── refs: RefsApi          list, get, describe
         ├── branches: BranchesApi  list, create
         ├── tags: TagsApi          list, create

@@ -36,6 +36,27 @@ def test_config_round_trip(tmp_path: Path) -> None:
     )
 
 
+def test_a_renamed_project_is_known_by_its_newest_name(tmp_path: Path) -> None:
+    cfg = Config(path=tmp_path / "config.toml")
+    p = cfg.profile("test", create=True)
+    p.remember_project("acct", "Website", "proj-1")
+    p.remember_project("acct", "Marketing site", "proj-1")
+
+    # Both names still resolve — several may point at one project on purpose — but the
+    # project is reported under the newest, not whichever was remembered first.
+    assert p.project_name("acct", "proj-1") == "Marketing site"
+    assert p.resolve_project("acct", "Website") == "proj-1"
+    assert p.resolve_project("acct", "Marketing site") == "proj-1"
+
+    # Remembering a name it already has must not make it the oldest again.
+    p.remember_project("acct", "Website", "proj-1")
+    assert p.project_name("acct", "proj-1") == "Website"
+
+    # And the order survives the file.
+    cfg.save()
+    assert Config.load(cfg.path).profile("test").project_name("acct", "proj-1") == "Website"
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows files have ACLs, not POSIX mode bits")
 def test_files_holding_credentials_are_owner_only(tmp_path: Path) -> None:
     """The config may name accounts and the credentials file holds tokens."""

@@ -165,6 +165,87 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectResponse' }
         '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [Projects]
+      summary: Rename a project
+      description: |
+        An organization admin's (doc 39 §11.1). The name is trimmed and must be unique within the
+        organization ignoring case (`PROJECT_NAME_TAKEN`); a blank one is `BAD_REQUEST`. Nothing
+        else changes: the project's id, its delivery paths and its keys are untouched, and an
+        archived project can still be renamed, because `archived` makes its content read-only
+        rather than freezing the organization's label for it.
+      operationId: renameProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: The new name, trimmed before it is stored }
+      responses:
+        '200':
+          description: The name as stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Projects]
+      summary: Delete an archived project
+      description: |
+        An organization admin's, with the project's name typed in `confirm` (doc 08 §9). Only an
+        archived project is deleted (`PROJECT_NOT_ARCHIVED` otherwise). It is gone at once: this
+        API answers 404, the registry stops listing and counting it, and its delivery key document
+        is emptied, so delivery refuses it within seconds. Its rows and objects wait seven days
+        for the purge.
+      operationId: deleteProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: string, description: The project's name }
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/projects/{project}/status:
+    parameters:
+      - $ref: '#/components/parameters/project'
+    put:
+      tags: [Projects]
+      summary: Archive or unarchive a project
+      description: |
+        An organization admin's (doc 08 §9). `archived` makes the project read-only: every write
+        is refused with `PROJECT_ARCHIVED`, reads go on, and delivery keeps serving its site.
+        `active` gives it back.
+      operationId: setProjectStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [archived, active] }
+      responses:
+        '200': { description: The status it now has }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 
   /v1/projects/{project}/refs:
     parameters:

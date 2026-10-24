@@ -45,6 +45,15 @@ def test_create_project_posts_to_the_account_collection(coho: Coho, bff: FakeBff
     assert req.get_json() == {"name": "Marketing site"}  # organizationId comes from the path (BF-3)
 
 
+def test_rename_project_patches_it_and_returns_the_stored_name(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    assert project.rename("  Marketing site  ") == "Marketing site"
+    req = bff.last()
+    assert req.method == "PATCH" and req.path == f"/api/v1/accounts/{ACCOUNT}/projects/{PROJECT}"
+    # The server trims; the SDK sends what it was given.
+    assert req.get_json() == {"name": "  Marketing site  "}
+
+
 def test_refs_encode_slashes(coho: Coho, bff: FakeBff) -> None:
     project = coho.account("acme").project(PROJECT)
     ref = project.refs.get("feature/pricing")

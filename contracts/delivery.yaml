@@ -90,6 +90,7 @@ info:
     |---|---|---|
     | No key presented | `401 KEY_REQUIRED` | The same answer whatever project id was asked for, so an unauthenticated caller learns nothing by trying ids |
     | A key that does not grant this project | `404 PROJECT_NOT_FOUND` | Indistinguishable from a project that never existed: one customer's key must not confirm another's |
+    | An account past its plan's delivery cap: Free's 2 GB a month (doc 45 §7.1) | `403 PLAN_LIMIT` | After the key, so only a caller the project would serve learns it; `detail` says when delivery resumes |
 
     ⚠️ **A keyed response is `private`, and a shared cache must not store it**
     (doc 20 DT-7). Caching one under a URL that carries no credential would serve
@@ -605,7 +606,7 @@ components:
           description: |
             The stable identifier clients branch on. Status is deliberately
             coarse, so a client switching on status is switching on almost nothing.
-          enum: [REF_NOT_FOUND, ENTRY_NOT_FOUND, INVALID_QUERY, RESOLUTION_LIMIT, ARTIFACT_UNREADABLE, KEY_REQUIRED, PROJECT_NOT_FOUND, POOL_UNAVAILABLE, UNAUTHENTICATED, ACCOUNT_SUSPENDED, ACCOUNT_CLOSED, USER_SUSPENDED]
+          enum: [REF_NOT_FOUND, ENTRY_NOT_FOUND, INVALID_QUERY, RESOLUTION_LIMIT, ARTIFACT_UNREADABLE, KEY_REQUIRED, PROJECT_NOT_FOUND, POOL_UNAVAILABLE, UNAUTHENTICATED, ACCOUNT_SUSPENDED, ACCOUNT_CLOSED, USER_SUSPENDED, PLAN_LIMIT]
           # ARTIFACT_UNREADABLE (500) is served only by the snapshot implementation,
           # when the artifact a ref resolves to is in a format this build cannot read
           # (doc 15 AF-3). The live implementation reads no artifact, so it cannot
@@ -621,6 +622,10 @@ components:
           # the authoring API does and refuses with that API's codes for the same checks
           # (doc 38 IR-9). The snapshot implementation keeps serving a suspended
           # account's site (UL-11), so it produces none of the 403s.
+          #
+          # PLAN_LIMIT (403) is served by both when the project's account is past a cap of
+          # its plan (doc 45 §7.1): the snapshot implementation for delivery a month, the live
+          # one for live reads a day. Its detail says when the refusal ends.
           #
           # POOL_UNAVAILABLE (503) is served by the router in front of the snapshot
           # implementation (doc 31), when a project's pool has no instance configured

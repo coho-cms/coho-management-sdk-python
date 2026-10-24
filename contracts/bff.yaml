@@ -381,6 +381,64 @@ paths:
       responses:
         '200': { description: "`:api-auth` `PATCH /v1/users/{userId}`" }
 
+  /api/v1/account-slugs:
+    get:
+      tags: [Account management]
+      summary: Whether a new organization could have a slug
+      description: |
+        Relayed to `GET /v1/account-slugs` (doc 19 UL-18), for a signed-in person creating another
+        organization; the sign-in service's sign-up page asks the same at `/auth/account-slugs`.
+        `?slug=` checks one typed, `?name=` the one a name becomes.
+      operationId: checkAccountSlug
+      parameters:
+        - { name: slug, in: query, required: false, schema: { type: string } }
+        - { name: name, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: "`{slug, available, reason?}`, as `:api-auth` answers" }
+
+  /api/v1/users/{userId}/accounts:
+    post:
+      tags: [Account management]
+      summary: Found another organization, as its first admin
+      description: |
+        Relayed to `POST /v1/users/{userId}/accounts` (doc 19 UL-21, UL-22). With no plan or
+        a free one it starts on Free, refused (`409 FREE_ORGANIZATION_HELD`) while the caller
+        owns a Free organization. With a paid `plan` it is founded waiting for that payment
+        (`awaitingPlan`), for the caller to pay through checkout; refused (`409 PAYMENT_PENDING`)
+        while another of theirs waits.
+      operationId: foundAccount
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                slug: { type: string, description: Its slug; derived from the name when absent }
+                plan: { type: string, description: The plan chosen; a paid one waits for its payment }
+      responses:
+        '201': { description: "`:api-auth` `POST /v1/users/{userId}/accounts`" }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/users/{userId}/accounts/{accountId}:
+    delete:
+      tags: [Account management]
+      summary: Remove an organization you founded for a paid plan and never paid for
+      description: |
+        Relayed to `DELETE /v1/users/{userId}/accounts/{accountId}` (doc 19 UL-22). Closes it at
+        once; anything not waiting for its first payment is refused (`409 NOT_AWAITING_PAYMENT`).
+      operationId: withdrawAccount
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string } }
+        - { name: accountId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Closed }
+        '409': { $ref: '#/components/responses/Problem' }
+
   /api/v1/users/{userId}/logins:
     get:
       tags: [Account management]
@@ -412,6 +470,87 @@ paths:
         - { $ref: '#/components/parameters/account' }
       responses:
         '200': { description: "`:api-auth` `PATCH /v1/accounts/{id}`" }
+
+  /api/v1/accounts/{account}/allowed-domains:
+    parameters:
+      - { $ref: '#/components/parameters/account' }
+    get:
+      tags: [Account management]
+      summary: The email domains invitations are limited to
+      description: Relayed to `GET /v1/accounts/{id}/allowed-domains` (doc 19 UL-25), for the organization's admins. Empty invites anyone.
+      operationId: getAllowedDomains
+      responses:
+        '200': { description: "`{domains: [...]}`" }
+    put:
+      tags: [Account management]
+      summary: Limit invitations to these email domains, or open them with none
+      description: |
+        Relayed to `PUT /v1/accounts/{id}/allowed-domains` (doc 19 UL-25). With domains listed, an
+        invitation outside them is refused (`409 DOMAIN_NOT_ALLOWED`), and so is accepting one
+        made before its domain was removed. Members already in are not affected.
+      operationId: setAllowedDomains
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domains]
+              properties:
+                domains: { type: array, items: { type: string } }
+      responses:
+        '200': { description: The domains as kept, cleaned }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/accounts/{account}/close:
+    post:
+      tags: [Account management]
+      summary: Close the organization, as its owner
+      description: |
+        Relayed to `POST /v1/accounts/{id}/close` (doc 19 UL-24). Only the owner may, with the
+        organization's slug typed in `confirm`, and only once it holds no project (`409
+        PROJECTS_REMAIN`). A subscription ends at once. Not undone through any API.
+      operationId: closeAccount
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: string, description: The organization's slug }
+      responses:
+        '204': { description: Closed }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/accounts/{account}/owner:
+    put:
+      tags: [Account management]
+      summary: Hand the organization to another member, as its owner
+      description: |
+        Relayed to `PUT /v1/accounts/{id}/owner` (doc 19 UL-23). Only the owner may; the new
+        owner must be an active member, and becomes an admin. A Free organization is not handed
+        to somebody who already owns a Free one (`409 FREE_ORGANIZATION_HELD`).
+      operationId: transferOwner
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+      responses:
+        '204': { description: Handed on }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
 
   /api/v1/accounts/{account}/users:
     get:
@@ -451,6 +590,65 @@ paths:
         - { $ref: '#/components/parameters/account' }
       responses:
         '200': { description: "`:api-auth` `GET /v1/accounts/{id}/entitlements`" }
+
+  /api/v1/accounts/{account}/charges:
+    get:
+      tags: [Account management]
+      summary: The billing period's charges, rated hourly
+      description: |
+        From the charge ledger (doc 45 §5): the period's base, each usage line
+        with what is included, used and billed, and the projection to the
+        period's end. Account admins only. `404` until the period is first rated.
+      operationId: getCharges
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - name: period
+          in: query
+          required: false
+          schema: { type: string, enum: [current, previous], default: current }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/charges`" }
+
+  /api/v1/accounts/{account}/billing-profile:
+    get:
+      tags: [Account management]
+      summary: The payment method on file and the billing details, from Stripe
+      description: |
+        The card's brand, last four digits and expiry, never a number, and who is billed
+        (doc 45 UB-25). Account admins only. `paying` is false for an account on Free.
+      operationId: getBillingProfile
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/billing-profile`" }
+
+  /api/v1/accounts/{account}/invoices:
+    get:
+      tags: [Account management]
+      summary: The account's invoices from Stripe, newest first
+      operationId: listInvoices
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 24 }
+      responses:
+        '200': { description: "`:api-auth` `GET /v1/accounts/{id}/invoices`" }
+
+  /api/v1/accounts/{account}/billing-portal:
+    post:
+      tags: [Account management]
+      summary: A link into Stripe's customer portal for the account
+      description: |
+        Where the card, the billing details and invoices are changed (doc 45 UB-25),
+        returning to `returnUrl`. `updatePaymentMethod` goes straight to replacing the
+        card. Account admins only; `404` for an account with nothing on file.
+      operationId: openBillingPortal
+      parameters:
+        - { $ref: '#/components/parameters/account' }
+      responses:
+        '201': { description: "`:api-auth` `POST /v1/accounts/{id}/billing-portal`: `{url}`" }
 
   /api/v1/accounts/{account}/subscription:
     get:

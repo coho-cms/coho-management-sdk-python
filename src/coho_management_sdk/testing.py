@@ -214,6 +214,12 @@ class FakeBff:
             list_projects
         )
         s.expect_request(p, method="GET").respond_with_json(PROJECT_DOC)
+
+        def rename_project(request: Request) -> Response:
+            self._record(request)
+            return ok({"name": str(request.get_json()["name"]).strip()})
+
+        s.expect_request(p, method="PATCH").respond_with_handler(rename_project)
         s.expect_request(f"{p}/refs", method="GET").respond_with_json(
             {
                 "refs": [
