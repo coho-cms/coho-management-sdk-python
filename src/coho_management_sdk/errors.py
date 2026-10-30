@@ -34,6 +34,9 @@ _CONTEXT_FIELDS = (
     "limit",
     "current",
     "state",
+    # A read at a seq the ref cannot be read at (coho-data doc 59 HI-4).
+    "at",
+    "highWaterMark",
 )
 
 
@@ -281,6 +284,27 @@ class PlanLimit(CohoError):
     code = "PLAN_LIMIT"
 
 
+class AtOutOfRange(CohoError):
+    """A `Ref` read at a seq it cannot be read at, or a write from one (coho-data doc 59).
+
+    Below zero, beyond the project's high-water mark, or past the seq of the tag being
+    read; or any write, which always lands on the tip. ``high_water_mark`` is how far the
+    project has got, for a read; ``context["ref"]`` names the tag, when it was one.
+    """
+
+    code = "AT_OUT_OF_RANGE"
+
+    @property
+    def at(self) -> int | None:
+        value = self.context.get("at")
+        return value if isinstance(value, int) else None
+
+    @property
+    def high_water_mark(self) -> int | None:
+        value = self.context.get("highWaterMark")
+        return value if isinstance(value, int) else None
+
+
 class AccountMismatch(CohoError):
     code = "ACCOUNT_MISMATCH"
 
@@ -419,6 +443,7 @@ _BY_CODE: dict[str, type[CohoError]] = {
         EnvironmentMoved,
         SnapshotNotReady,
         PlanLimit,
+        AtOutOfRange,
         AccountMismatch,
         UpstreamUnavailable,
         Internal,

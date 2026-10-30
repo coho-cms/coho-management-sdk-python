@@ -8,6 +8,14 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `project.ref(name, at=seq)`: the ref read as it was at that seq (coho-data doc 59 HI-4),
+  for every read through it: types, traits, entries, their history and references, and
+  assets. `Ref.at` says which. Writes through it carry `at` too, for the server to refuse,
+  so none lands on the tip by mistake; `export` and `preview` raise `ValueError`, since
+  neither reads at a point yet. `AtOutOfRange` is the refusal, with `.at` and
+  `.high_water_mark`. Needs a server with `at` on reads.
+- `Transport.with_params(**params)`: the same transport, sending those parameters on every
+  request too.
 - `Project.rename(name)`: renames a project, returning the name as stored (coho-data doc 39
   §11.1). An account admin's, and allowed while the project is archived. Nothing else about the
   project changes, so held ids, delivery paths and keys stay valid. ⚠️ A name the CLI remembered

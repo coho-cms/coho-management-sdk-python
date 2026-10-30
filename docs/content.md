@@ -94,6 +94,24 @@ r = dev.entries.references(entry_id)    # complete, never paginated
 r.total, [(i.node_id, i.field) for i in r.incoming]
 ```
 
+### Reading at an earlier point
+
+A ref with `at` reads as it was at that seq: the `seq` a history row reports. Every read
+through it is of the same moment, so an old entry comes back with its type as it was then.
+
+```python
+v = h.versions[3]
+then = dev.project.ref(v.branch, at=v.seq)
+old = then.entries.get(entry_id)                       # old.etag == f'"{v.version}"'
+then.types.get(old.type, effective=True)               # the type folded at that seq
+```
+
+On a tag, `at` may go back but not past the tag. A seq below zero, beyond what the project
+has reached, or past the tag raises `AtOutOfRange` with `.at` and `.high_water_mark`. A ref
+read at a seq writes nothing: the server refuses its writes with the same error, and
+`export` and `preview` raise `ValueError` locally, since neither reads at a point yet.
+Needs a server with `at` on reads (coho-data doc 59 HI-4).
+
 ## Validation errors
 
 ```python

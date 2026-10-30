@@ -6,6 +6,7 @@ either a parsed body or a `CohoError`. Nothing above it imports httpx.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -71,6 +72,19 @@ class Transport:
         self._token_provider = token_provider or (lambda: None)
         self._client = client or httpx.Client(timeout=timeout, follow_redirects=False)
         self._user_agent = user_agent or f"coho-management-sdk/{__version__}"
+        # Sent on every request as well as the caller's own, which win (`with_params`).
+        self._fixed_params: dict[str, Any] = {}
+
+    def with_params(self, **params: Any) -> Transport:
+        """This transport, sending ``params`` on every request too, over the same connection.
+
+        How a `Ref` read at a seq sends ``at`` on everything it does, writes included: the
+        server refuses a write that carries it, where a write that forgot it would land on
+        the branch tip as though nothing had been asked.
+        """
+        pinned = copy.copy(self)
+        pinned._fixed_params = {**self._fixed_params, **params}
+        return pinned
 
     def close(self) -> None:
         self._client.close()
@@ -109,7 +123,8 @@ class Transport:
         request_headers = self._headers(headers, auth=auth)
         if if_match is not None:
             request_headers["If-Match"] = if_match
-        clean_params = {k: _param(v) for k, v in (params or {}).items() if v is not None}
+        merged = {**self._fixed_params, **(params or {})}
+        clean_params = {k: _param(v) for k, v in merged.items() if v is not None}
         url = self.base_url + path
         try:
             if stream:

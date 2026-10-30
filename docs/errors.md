@@ -59,6 +59,7 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `EnvironmentMoved` | `ENVIRONMENT_MOVED` | |
 | `SnapshotNotReady` | `SNAPSHOT_NOT_READY` | `context["state"]` |
 | `PlanLimit` | `PLAN_LIMIT` | 400 from authoring, 409 from auth — same class |
+| `AtOutOfRange` | `AT_OUT_OF_RANGE` | `.at`, `.high_water_mark`; `context["ref"]` for a tag. A ref read at a seq it cannot be read at, or a write from one |
 | `AccountMismatch` | `ACCOUNT_MISMATCH` | |
 | `Invalid` | `INVALID` | auth tier validation |
 | `LastAdmin` | `LAST_ADMIN` | |

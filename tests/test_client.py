@@ -160,6 +160,48 @@ def test_create_entry_errors_carry_context(coho: Coho) -> None:
     assert info2.value.errors == [{"path": "title", "message": "required"}]
 
 
+def test_a_ref_read_at_a_seq_sends_it_on_every_read(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    dev = project.ref("dev", at=42)
+    assert dev.at == 42
+    dev.entries.get(ENTRY)
+    dev.entries.history(ENTRY, limit=10)
+    dev.entries.references(ENTRY)
+    dev.entries.list(type="blogPost")
+    dev.types.get("blogPost", effective=True)
+    dev.traits.list()
+    dev.assets.list()
+    # The server's own log: the fake records only what its handlers see.
+    sent = [request for request, _ in bff.server.log[-7:]]
+    assert [r.args.get("at") for r in sent] == ["42"] * 7
+    # Alongside the call's own parameters, not instead of them.
+    assert sent[1].args.get("limit") == "10" and sent[3].args.get("type") == "blogPost"
+    assert sent[4].args.get("resolve") == "effective"
+    # The same project's other refs, and the ref read now, are untouched.
+    project.ref("dev").entries.get(ENTRY)
+    assert "at" not in bff.server.log[-1][0].args
+
+
+def test_a_write_from_a_ref_at_a_seq_carries_it_for_the_server_to_refuse(
+    coho: Coho, bff: FakeBff
+) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev", at=42)
+    post = dev.entries.get(ENTRY)
+    dev.entries.put(post)
+    put = bff.server.log[-1][0]
+    assert put.method == "PUT" and put.args.get("at") == "42"
+
+
+def test_export_and_preview_refuse_a_ref_at_a_seq(coho: Coho, bff: FakeBff) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev", at=42)
+    before = len(bff.requests)
+    with pytest.raises(ValueError, match="at=42"):
+        dev.export()
+    with pytest.raises(ValueError, match="at=42"):
+        dev.preview()
+    assert len(bff.requests) == before
+
+
 def test_iterate_follows_pages(coho: Coho) -> None:
     dev = coho.account("acme").project(PROJECT).ref("dev")
     slugs = [x.slug for x in dev.entries.iterate(page_size=2)]

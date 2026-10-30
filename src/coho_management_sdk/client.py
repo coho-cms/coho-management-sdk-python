@@ -422,8 +422,9 @@ class Project:
         self._info = None
         return stored
 
-    def ref(self, name: str) -> Ref:
-        return Ref(self, name)
+    def ref(self, name: str, *, at: int | None = None) -> Ref:
+        """A branch, tag or environment; with ``at``, read as it was at that seq."""
+        return Ref(self, name, at=at)
 
     # -- diff and merge --------------------------------------------------------
 
@@ -889,12 +890,20 @@ class Preview:
 
 
 class Ref:
-    """A branch, tag or environment, as a place to read and (for a branch) write content."""
+    """A branch, tag or environment, as a place to read and (for a branch) write content.
 
-    def __init__(self, project: Project, name: str) -> None:
+    With ``at``, every read is of the ref as it was at that seq (coho-data doc 59): types,
+    traits, entries, their history and references, and assets, all of the same moment. A
+    seq is what an entry's ``history`` reports for each write. On a tag ``at`` may go back
+    but not past the tag. Such a ref writes nothing: the server refuses a write from it
+    with `AtOutOfRange`, as it refuses a seq the project has not reached.
+    """
+
+    def __init__(self, project: Project, name: str, *, at: int | None = None) -> None:
         self.project = project
         self.name = name
-        self._t = project._t
+        self.at = at
+        self._t = project._t if at is None else project._t.with_params(at=at)
         self.path = f"{project.path}/refs/{segment(name)}"
         self.types = TypesApi(self)
         self.traits = TraitsApi(self)
@@ -905,10 +914,17 @@ class Ref:
         return self.project.refs.get(self.name)
 
     def export(self, **kw: Any) -> m.Export:
+        self._now_only("export")
         return self.project.export(self.name, **kw)
 
     def preview(self) -> Preview:
+        self._now_only("preview")
         return self.project.preview(self.name)
+
+    def _now_only(self, what: str) -> None:
+        # Neither takes `at` yet, so either would answer with the ref as it is now.
+        if self.at is not None:
+            raise ValueError(f"{what} reads the ref as it is now; it does not take at={self.at}")
 
 
 class TypesApi:

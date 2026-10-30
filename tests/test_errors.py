@@ -61,6 +61,13 @@ def test_status_alone_is_never_the_branch() -> None:
     assert isinstance(a, e.PlanLimit) and isinstance(b, e.PlanLimit)
 
 
+def test_at_out_of_range_carries_the_seq_and_the_high_water_mark() -> None:
+    body = '{"code":"AT_OUT_OF_RANGE","title":"x","status":400,"at":99,"highWaterMark":42}'
+    err = e.error_for_response(_resp(400, body, "application/problem+json"))
+    assert isinstance(err, e.AtOutOfRange)
+    assert err.at == 99 and err.high_water_mark == 42
+
+
 def test_non_problem_body_becomes_transport_error() -> None:
     err = e.error_for_response(_resp(502, "<html>Bad Gateway</html>", "text/html"))
     assert isinstance(err, e.TransportError)
