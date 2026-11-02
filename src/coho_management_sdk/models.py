@@ -1063,6 +1063,269 @@ class Pins:
 
 
 @dataclass(slots=True)
+class WebhookHealth:
+    """How a webhook's deliveries have gone: the last one's state and time, and the last
+    24 hours' count of each outcome."""
+
+    last_state: str | None
+    last_at: str | None
+    succeeded_24h: int
+    failed_24h: int
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookHealth:
+        return cls(
+            last_state=raw.get("lastState"),
+            last_at=raw.get("lastAt"),
+            succeeded_24h=int(raw.get("succeeded24h") or 0),
+            failed_24h=int(raw.get("failed24h") or 0),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class Webhook:
+    """An endpoint Coho calls when something happens in the project (coho-data doc 70).
+
+    Never its signing secret, and never its custom headers' values: ``headers`` is their
+    names. ``url`` is the full URL from `WebhooksApi.get` only, since a build hook's URL
+    is its credential; `WebhooksApi.list` gives ``host`` alone. ``refs`` is ``None`` for
+    every ref. ``enabled`` is false when an owner turned it off or when it failed for five
+    days, and then ``disabled_reason`` says why.
+    """
+
+    id: str
+    host: str
+    url: str | None
+    description: str | None
+    events: list[str]
+    refs: list[str] | None
+    headers: list[str]
+    enabled: bool
+    disabled_reason: str | None
+    disabled_at: str | None
+    failing_since: str | None
+    created_by: str
+    created_at: str
+    updated_at: str | None
+    previous_secret_until: str | None
+    """While a rotation overlaps, when the previous secret stops signing."""
+    health: WebhookHealth | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> Webhook:
+        refs = raw.get("refs")
+        health = raw.get("health")
+        return cls(
+            id=str(raw.get("id", "")),
+            host=str(raw.get("host", "")),
+            url=raw.get("url"),
+            description=raw.get("description"),
+            events=[str(e) for e in raw.get("events") or []],
+            refs=[str(r) for r in refs] if isinstance(refs, list) else None,
+            headers=[str(h) for h in raw.get("headers") or []],
+            enabled=raw.get("enabled") is True,
+            disabled_reason=raw.get("disabledReason"),
+            disabled_at=raw.get("disabledAt"),
+            failing_since=raw.get("failingSince"),
+            created_by=str(raw.get("createdBy", "")),
+            created_at=str(raw.get("createdAt", "")),
+            updated_at=raw.get("updatedAt"),
+            previous_secret_until=raw.get("previousSecretUntil"),
+            health=WebhookHealth.from_dict(health) if isinstance(health, dict) else None,
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookList:
+    """The project's webhooks, and how many it may have."""
+
+    webhooks: list[Webhook]
+    limit: int
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookList:
+        return cls(
+            webhooks=[Webhook.from_dict(w) for w in _list(raw, "webhooks")],
+            limit=int(raw.get("limit") or 0),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class CreatedWebhook:
+    """⚠️ ``secret`` (``whsec_…``) is in this response and in no other, ever. It is stored
+    sealed, and the server never reads it back."""
+
+    secret: str
+    webhook: Webhook
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> CreatedWebhook:
+        return cls(
+            secret=str(raw.get("secret", "")),
+            webhook=Webhook.from_dict(raw.get("webhook") or {}),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookSecret:
+    """⚠️ A rotated signing secret, shown once. The previous one goes on signing beside it
+    until ``previous_secret_until``, so a receiver can be updated without dropping a
+    request."""
+
+    secret: str
+    previous_secret_until: str | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookSecret:
+        return cls(
+            secret=str(raw.get("secret", "")),
+            previous_secret_until=raw.get("previousSecretUntil"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookEvents:
+    """What a webhook can subscribe to: each event type, and each group, written
+    ``tag.*``. ``*`` is every event."""
+
+    events: list[str]
+    groups: list[str]
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookEvents:
+        return cls(
+            events=[str(e) for e in raw.get("events") or []],
+            groups=[str(g) for g in raw.get("groups") or []],
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookDelivery:
+    """One event sent, or being sent, to one webhook.
+
+    ``state`` is ``held`` (a promotion's, until its release is readable), ``pending``,
+    ``running``, ``succeeded``, or ``failed``. ``event_id`` (``evt_…``) is the request's
+    ``webhook-id`` header, the same on every attempt and every redelivery.
+    ``last_error_kind`` is ``dns``, ``refused_address``, ``connect``, ``tls``,
+    ``timeout``, ``redirect``, ``http``, or ``internal``.
+    """
+
+    id: str
+    event_id: str
+    type: str
+    ref: str | None
+    state: str
+    attempts: int
+    next_attempt_at: str | None
+    last_status: int | None
+    last_error_kind: str | None
+    created_at: str
+    finished_at: str | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookDelivery:
+        return cls(
+            id=str(raw.get("id", "")),
+            event_id=str(raw.get("eventId", "")),
+            type=str(raw.get("type", "")),
+            ref=raw.get("ref"),
+            state=str(raw.get("state", "")),
+            attempts=int(raw.get("attempts") or 0),
+            next_attempt_at=raw.get("nextAttemptAt"),
+            last_status=raw.get("lastStatus"),
+            last_error_kind=raw.get("lastErrorKind"),
+            created_at=str(raw.get("createdAt", "")),
+            finished_at=raw.get("finishedAt"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookDeliveries:
+    """A page of a webhook's log, newest first."""
+
+    deliveries: list[WebhookDelivery]
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookDeliveries:
+        return cls(
+            deliveries=[WebhookDelivery.from_dict(d) for d in _list(raw, "deliveries")],
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookAttempt:
+    """One request a delivery made: when, how long, and what came back.
+
+    ``request_headers`` has the signature and the custom headers' values masked.
+    ``response_body`` is the first 2 KB. A request that got no answer has no status and
+    an ``error_kind``, with ``error`` in plain words.
+    """
+
+    n: int
+    started_at: str
+    duration_ms: int
+    request_headers: JSON
+    response_status: int | None
+    response_headers: JSON | None
+    response_body: str | None
+    error_kind: str | None
+    error: str | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookAttempt:
+        request_headers = raw.get("requestHeaders")
+        response_headers = raw.get("responseHeaders")
+        return cls(
+            n=int(raw.get("n") or 0),
+            started_at=str(raw.get("startedAt", "")),
+            duration_ms=int(raw.get("durationMs") or 0),
+            request_headers=request_headers if isinstance(request_headers, dict) else {},
+            response_status=raw.get("responseStatus"),
+            response_headers=response_headers if isinstance(response_headers, dict) else None,
+            response_body=raw.get("responseBody"),
+            error_kind=raw.get("errorKind"),
+            error=raw.get("error"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class WebhookDeliveryDetail:
+    """One delivery, the body exactly as it was sent and signed, and every attempt."""
+
+    delivery: WebhookDelivery
+    body: str
+    attempts: list[WebhookAttempt]
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> WebhookDeliveryDetail:
+        return cls(
+            delivery=WebhookDelivery.from_dict(raw.get("delivery") or {}),
+            body=str(raw.get("body", "")),
+            attempts=[WebhookAttempt.from_dict(a) for a in _list(raw, "attempts")],
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
 class DeliveryKey:
     """Metadata about a key. Never the key itself, never its hash."""
 

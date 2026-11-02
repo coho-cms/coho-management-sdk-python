@@ -21,6 +21,8 @@ Coho
         ├── tiers: TiersApi        list, create, move, delete
         ├── roles: RolesApi        list, grant, revoke
         ├── pins: PinsApi          list(ref), add, remove, order    the caller's own
+        ├── webhooks: WebhooksApi  list, events, get, create, update, delete, rotate_secret,
+        │                          test, deliveries, delivery, redeliver, redeliver_failed
         ├── delivery_keys: DeliveryKeysApi  list, issue, revoke, set_public
         ├── export(ref, …), preview(ref) → Preview
         ├── usage(grain, start, end, meters) → UsageReport

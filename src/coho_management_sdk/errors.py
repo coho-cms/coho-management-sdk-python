@@ -238,6 +238,46 @@ class PinLimit(CohoError):
     code = "PIN_LIMIT"
 
 
+class WebhookInvalid(CohoError):
+    """A webhook (coho-data doc 70) the server will not keep as given: no events, too many
+    ref patterns, a header with a line break, a test sent to a disabled one … The detail
+    says which. The refusals below are its more particular cases."""
+
+    code = "WEBHOOK_INVALID"
+
+
+class WebhookUrlInvalid(WebhookInvalid):
+    """Not a URL a webhook can have: HTTPS only, with no user name or password in it."""
+
+    code = "WEBHOOK_URL_INVALID"
+
+
+class WebhookUrlRefused(WebhookInvalid):
+    """The URL is, or resolves to, an address webhooks cannot reach: loopback, private,
+    link-local, and the like. The detail names the address."""
+
+    code = "WEBHOOK_URL_REFUSED"
+
+
+class WebhookEventUnknown(WebhookInvalid):
+    """An event no webhook can subscribe to; `WebhooksApi.events` lists the ones it can."""
+
+    code = "WEBHOOK_EVENT_UNKNOWN"
+
+
+class WebhookHeaderReserved(WebhookInvalid):
+    """A custom header Coho sets itself, such as ``webhook-signature`` or
+    ``content-type``."""
+
+    code = "WEBHOOK_HEADER_RESERVED"
+
+
+class WebhookLimitReached(CohoError):
+    """The project has as many webhooks as it may (25); delete one first."""
+
+    code = "WEBHOOK_LIMIT_REACHED"
+
+
 class RefNameTaken(CohoError):
     code = "REF_NAME_TAKEN"
 
@@ -355,6 +395,13 @@ class AssetsUnavailable(UpstreamUnavailable):
     """This deployment has no asset store. Nothing was written; nothing you send fixes it."""
 
     code = "ASSETS_UNAVAILABLE"
+
+
+class WebhooksUnconfigured(UpstreamUnavailable):
+    """This deployment cannot seal webhook secrets, so it keeps no webhooks. Nothing was
+    written; nothing you send fixes it (coho-data doc 70)."""
+
+    code = "WEBHOOKS_UNCONFIGURED"
 
 
 class AssetTooLarge(CohoError):
@@ -479,6 +526,13 @@ _BY_CODE: dict[str, type[CohoError]] = {
         TraitInUse,
         SingletonBlocked,
         PinLimit,
+        WebhookInvalid,
+        WebhookUrlInvalid,
+        WebhookUrlRefused,
+        WebhookEventUnknown,
+        WebhookHeaderReserved,
+        WebhookLimitReached,
+        WebhooksUnconfigured,
     )
 }
 for _code in ("INVITATION_USED", "INVITATION_ACCEPTED", "INVITATION_REVOKED", "INVITATION_EXPIRED"):

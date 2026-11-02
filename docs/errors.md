@@ -35,6 +35,7 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `TransportError` | `TRANSPORT`, `HTTP_<status>` | could not reach the server, or a non-problem response |
 | ↳ `UpstreamUnavailable` | `UPSTREAM_UNAVAILABLE` | the BFF could not reach a tier |
 | ↳↳ `AssetsUnavailable` | `ASSETS_UNAVAILABLE` | the deployment has no asset store |
+| ↳↳ `WebhooksUnconfigured` | `WEBHOOKS_UNCONFIGURED` | the deployment has no key to seal webhook secrets with |
 | ↳ `UploadRejected` | `UPLOAD_REJECTED` | object storage refused an upload's bytes; `.storage_code` (`BadDigest`, `SignatureDoesNotMatch`, `AccessDenied`) |
 | `AuthError` | `AUTH` | the login flow failed |
 | ↳ `NotLoggedIn` | `NOT_LOGGED_IN` | no token for the profile |
@@ -67,6 +68,12 @@ plain `CohoError` whose `.code` is still exact. Parent classes catch their child
 | `AlreadyRegistered` | `ALREADY_REGISTERED` | |
 | `AccountClosed` | `ACCOUNT_CLOSED` | |
 | `InvitationUnusable` | `INVITATION_USED`, `INVITATION_ACCEPTED`, `INVITATION_REVOKED`, `INVITATION_EXPIRED` | |
+| `WebhookInvalid` | `WEBHOOK_INVALID` | a webhook the server will not keep as given; the parent of the four below |
+| ↳ `WebhookUrlInvalid` | `WEBHOOK_URL_INVALID` | not HTTPS, or a user name or password in the URL |
+| ↳ `WebhookUrlRefused` | `WEBHOOK_URL_REFUSED` | the URL reaches a private, loopback, or link-local address |
+| ↳ `WebhookEventUnknown` | `WEBHOOK_EVENT_UNKNOWN` | not an event a webhook can subscribe to |
+| ↳ `WebhookHeaderReserved` | `WEBHOOK_HEADER_RESERVED` | a custom header Coho sets itself |
+| `WebhookLimitReached` | `WEBHOOK_LIMIT_REACHED` | the project has 25 webhooks |
 | `AssetTooLarge` | `ASSET_TOO_LARGE` | `.limit` in bytes; also raised locally by `assets.upload` before sending |
 | `AssetTypeNotAllowed` | `ASSET_TYPE_NOT_ALLOWED` | the bytes are not an image, PDF, audio or video |
 | `AssetUploadIncomplete` | `ASSET_UPLOAD_INCOMPLETE` | completed before the PUT, or other bytes |

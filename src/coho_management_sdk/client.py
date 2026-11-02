@@ -212,15 +212,17 @@ def _usage_query(
     end: str | datetime | None,
     meters: builtins.list[str] | None,
 ) -> dict[str, str | None]:
-    def instant(value: str | datetime | None) -> str | None:
-        return value.isoformat() if isinstance(value, datetime) else value
-
     return {
         "grain": grain,
-        "from": instant(start),
-        "to": instant(end),
+        "from": _instant(start),
+        "to": _instant(end),
         "meter": ",".join(meters) if meters else None,
     }
+
+
+def _instant(value: str | datetime | None) -> str | None:
+    """A time as the API takes it: ISO 8601, as given or from a ``datetime``."""
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 def _looks_like_id(value: str) -> bool:
@@ -397,6 +399,7 @@ class Project:
         self.delivery_keys = DeliveryKeysApi(self)
         self.tokens = ProjectTokensApi(self)
         self.pins = PinsApi(self)
+        self.webhooks = WebhooksApi(self)
 
     def info(self, *, refresh: bool = False) -> m.ProjectInfo:
         if self._info is None or refresh:
@@ -813,6 +816,162 @@ class PinsApi:
     def order(self, entry_ids: builtins.list[str]) -> None:
         """The whole order, top first: every pinned entry once, and nothing else."""
         self._t.put(f"{self._p.path}/pins", {"entries": entry_ids})
+
+
+class WebhooksApi:
+    """Endpoints Coho calls when something happens in this project (coho-data doc 70), and
+    each one's log. Owners only (``webhook:manage``, and ``webhook:read`` for the log),
+    which a project token never is. A project has at most 25 (``WebhookList.limit``).
+
+    Changes are refused on an archived project (``PROJECT_ARCHIVED``); its log can still be
+    read. A deployment without the key that seals URLs, headers, and secrets refuses to
+    make a webhook, or to read or change one's URL, with `WebhooksUnconfigured`.
+    """
+
+    def __init__(self, project: Project) -> None:
+        self._p = project
+        self._t = project._t
+
+    def _path(self, webhook_id: str) -> str:
+        return f"{self._p.path}/webhooks/{segment(webhook_id)}"
+
+    def list(self) -> m.WebhookList:
+        """Each with its host, but not the rest of its URL, which only `get` returns."""
+        return m.WebhookList.from_dict(self._t.get(f"{self._p.path}/webhooks").body)
+
+    def events(self) -> m.WebhookEvents:
+        """The event types a webhook can subscribe to, and their groups (``tag.*``)."""
+        return m.WebhookEvents.from_dict(self._t.get(f"{self._p.path}/webhook-events").body)
+
+    def get(self, webhook_id: str) -> m.Webhook:
+        """One webhook, with its full URL."""
+        return m.Webhook.from_dict(self._t.get(self._path(webhook_id)).body)
+
+    def create(
+        self,
+        *,
+        url: str,
+        events: builtins.list[str],
+        refs: builtins.list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        enabled: bool = True,
+    ) -> m.CreatedWebhook:
+        """⚠️ The signing secret is in the result and nowhere else, ever.
+
+        ``url`` is HTTPS on a public address. ``events`` are types, groups such as
+        ``tag.*``, or ``*``; ``refs`` are ref patterns with ``*`` and ``?``, and ``None``
+        sends every ref's events. ``headers`` are sent with every request; their values
+        are never read back.
+        """
+        body: JSON = {"url": url, "events": events, "enabled": enabled}
+        if refs is not None:
+            body["refs"] = refs
+        if headers is not None:
+            body["headers"] = headers
+        if description is not None:
+            body["description"] = description
+        return m.CreatedWebhook.from_dict(self._t.post(f"{self._p.path}/webhooks", body).body)
+
+    def update(
+        self,
+        webhook_id: str,
+        *,
+        url: str | None = None,
+        events: builtins.list[str] | None = None,
+        refs: builtins.list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+    ) -> m.Webhook:
+        """Changes what is given and leaves the rest.
+
+        ``refs=[]`` means every ref again. ``headers`` replaces every custom header, since
+        their values cannot be read back to merge with, and ``headers={}`` clears them.
+        ``description=""`` clears the description. ``enabled=True`` also clears the run of
+        failures that disabled it.
+        """
+        body: JSON = {}
+        for key, value in (
+            ("url", url),
+            ("events", events),
+            ("refs", refs),
+            ("headers", headers),
+            ("description", description),
+            ("enabled", enabled),
+        ):
+            if value is not None:
+                body[key] = value
+        return m.Webhook.from_dict(self._t.patch(self._path(webhook_id), body).body)
+
+    def delete(self, webhook_id: str) -> None:
+        """Deletes it with its deliveries and their log."""
+        self._t.delete(self._path(webhook_id))
+
+    def rotate_secret(self, webhook_id: str) -> m.WebhookSecret:
+        """⚠️ A new signing secret, shown once. The previous one signs beside it for 24
+        hours; rotating again within the day erases the oldest at once."""
+        return m.WebhookSecret.from_dict(
+            self._t.post(f"{self._path(webhook_id)}/rotate-secret").body
+        )
+
+    def test(self, webhook_id: str) -> str:
+        """Queues a ``ping`` to this webhook alone, and returns its delivery's id. The
+        cell's sender sends it within seconds; `delivery` then shows how it went. A
+        disabled webhook is refused (``WEBHOOK_INVALID``)."""
+        return str(self._t.post(f"{self._path(webhook_id)}/test").body["delivery"])
+
+    def deliveries(
+        self,
+        webhook_id: str,
+        *,
+        state: str | None = None,
+        type: str | None = None,
+        since: str | datetime | None = None,
+        before: str | datetime | None = None,
+        limit: int | None = None,
+    ) -> m.WebhookDeliveries:
+        """The log, newest first: 50 unless ``limit`` (at most 200) says otherwise.
+
+        ``state`` is ``held``, ``pending``, ``running``, ``succeeded``, or ``failed``;
+        ``type`` an event type. ``since`` and ``before`` bound when each was created, as
+        ISO 8601 or a timezone-aware ``datetime``: pass the last one's ``created_at`` as
+        ``before`` for the next page.
+        """
+        body = self._t.get(
+            f"{self._path(webhook_id)}/deliveries",
+            params={
+                "state": state,
+                "type": type,
+                "since": _instant(since),
+                "before": _instant(before),
+                "limit": limit,
+            },
+        ).body
+        return m.WebhookDeliveries.from_dict(body)
+
+    def delivery(self, webhook_id: str, delivery_id: str) -> m.WebhookDeliveryDetail:
+        """One delivery, the body exactly as it was signed, and every attempt."""
+        return m.WebhookDeliveryDetail.from_dict(
+            self._t.get(f"{self._path(webhook_id)}/deliveries/{segment(delivery_id)}").body
+        )
+
+    def redeliver(self, webhook_id: str, delivery_id: str) -> int:
+        """Sends a finished delivery once more, with the same event id, so a receiver that
+        handled it already can drop it. One still being sent is refused
+        (``BAD_REQUEST``). Returns how many were queued: 1."""
+        body = self._t.post(
+            f"{self._path(webhook_id)}/deliveries/{segment(delivery_id)}/redeliver"
+        ).body
+        return int(body["redelivered"])
+
+    def redeliver_failed(self, webhook_id: str, since: str | datetime) -> int:
+        """Sends every delivery that failed since ``since`` once more, after a receiver's
+        outage. Returns how many were queued."""
+        body = self._t.post(
+            f"{self._path(webhook_id)}/redeliver", params={"since": _instant(since)}
+        ).body
+        return int(body["redelivered"])
 
 
 class ProjectTokensApi:

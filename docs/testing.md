@@ -54,6 +54,14 @@ What it encodes:
   `ASSET_UPLOAD_INCOMPLETE`, and anything that is not a PNG, JPEG, PDF or SVG is
   `ASSET_TYPE_NOT_ALLOWED`. Completed assets are in `bff.assets`, listed in slug order,
   with `If-Match` on `put` and `delete` as for entries.
+- Webhooks (`bff.webhooks`, by id), with the server's refusals: `http://` is
+  `WEBHOOK_URL_INVALID`, `localhost` or a private literal `WEBHOOK_URL_REFUSED`, an event not
+  in `WEBHOOK_EVENTS` `WEBHOOK_EVENT_UNKNOWN`, a `webhook-`, `content-`, or `coho-` header
+  `WEBHOOK_HEADER_RESERVED`, and the 26th `WEBHOOK_LIMIT_REACHED`. Header values and secrets
+  are in `bff.webhook_headers` and `bff.webhook_secrets`. Nothing is sent: `test` logs a
+  `ping` that succeeded, and `bff.add_delivery(id, state=…, status=…, error_kind=…)` writes
+  any other delivery, a minute after the last. Set `bff.webhooks_configured = False` for a
+  deployment that refuses them with `WEBHOOKS_UNCONFIGURED`.
 - Account `gateway` answers a `502` HTML page, to test non-problem failures.
 
 `bff.requests` is every request seen by the handlers that record (writes, mostly);

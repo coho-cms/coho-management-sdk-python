@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import uuid
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from pytest_httpserver import HTTPServer
 from werkzeug.wrappers import Request, Response
@@ -41,6 +44,40 @@ INVITATION_TOKEN = "invite-token-abc"
 
 # The most pins one person keeps in one project, as the server caps it.
 PIN_LIMIT = 20
+
+# A project's webhooks, as the server caps them (coho-data doc 70, WEBHOOK_LIMIT).
+WEBHOOK_LIMIT = 25
+
+# What a webhook can subscribe to, as `GET …/webhook-events` lists it.
+WEBHOOK_EVENTS = [
+    "environment.promoted",
+    "environment.created",
+    "environment.deleted",
+    "tag.created",
+    "tag.ready",
+    "tag.build_failed",
+    "tag_request.refused",
+    "branch.created",
+    "branch.merged",
+    "entries.changed",
+    "assets.changed",
+    "model.changed",
+    "project.archived",
+    "project.unarchived",
+    "project.deleted",
+    "role.granted",
+    "role.revoked",
+    "token.created",
+    "token.revoked",
+    "delivery_key.created",
+    "delivery_key.revoked",
+    "webhook.created",
+    "webhook.updated",
+    "webhook.deleted",
+    "webhook.disabled",
+]
+
+WEBHOOK_DELIVERY_STATES = ("held", "pending", "running", "succeeded", "failed")
 
 # How many invalid entries a TAG_CONTENT_INVALID lists, as the server caps it.
 # `entryCount` has the total.
@@ -93,6 +130,92 @@ def ok(body: Any, status: int = 200, **headers: str) -> Response:
     )
 
 
+def _new_secret() -> str:
+    return "whsec_" + base64.b64encode(uuid.uuid4().bytes * 2).decode()
+
+
+def _moment(value: str) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _pending(delivery: dict[str, Any]) -> None:
+    """Sent again: due now, its run not yet finished."""
+    delivery.update(state="pending", finishedAt=None, nextAttemptAt=delivery["createdAt"])
+
+
+_RESERVED_HEADERS = {"host", "user-agent", "connection", "transfer-encoding", "content-length"}
+_RESERVED_HEADER_PREFIXES = ("webhook-", "content-", "coho-", "proxy-")
+
+
+def _check_webhook(body: dict[str, Any], *, change: bool) -> Response | None:
+    """The server's refusals of a webhook's fields, in its order: the URL's shape, where it
+    goes, then the rest. ``None`` when it would keep them."""
+    url = body.get("url")
+    if url is not None:
+        parts = urlsplit(str(url))
+        if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+            return problem(
+                400,
+                "WEBHOOK_URL_INVALID",
+                "A webhook's URL is HTTPS, with a host and no user name or password",
+            )
+        if _unreachable(parts.hostname):
+            return problem(
+                400,
+                "WEBHOOK_URL_REFUSED",
+                f"{parts.hostname} is a private address, which webhooks cannot reach",
+            )
+    events = body.get("events")
+    if events is not None:
+        if not events:
+            return problem(
+                400,
+                "WEBHOOK_INVALID",
+                "Name at least one event: a type, a group such as 'tag.*', or '*'",
+            )
+        groups = {e.split(".")[0] for e in WEBHOOK_EVENTS}
+        for pattern in events:
+            known = pattern == "*" or pattern in WEBHOOK_EVENTS
+            if not known and not (pattern.endswith(".*") and pattern[:-2] in groups):
+                return problem(
+                    400,
+                    "WEBHOOK_EVENT_UNKNOWN",
+                    f"'{pattern}' is not a webhook event. GET …/webhook-events lists them; "
+                    "a group is written 'tag.*', and '*' is every event",
+                )
+    refs = body.get("refs")
+    if refs is not None and not refs and not change:
+        return problem(
+            400, "WEBHOOK_INVALID", "Name at least one ref pattern, or leave refs out for every ref"
+        )
+    headers = body.get("headers") or {}
+    if len(headers) > 5:
+        return problem(400, "WEBHOOK_INVALID", "At most 5 custom headers")
+    for name in headers:
+        lower = name.strip().lower()
+        if lower in _RESERVED_HEADERS or lower.startswith(_RESERVED_HEADER_PREFIXES):
+            return problem(
+                400,
+                "WEBHOOK_HEADER_RESERVED",
+                f"'{name}' is set by Coho and cannot be a custom header",
+            )
+    return None
+
+
+def _unreachable(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
 class FakeBff:
     """Registers routes on a pytest-httpserver and records what it saw."""
 
@@ -116,12 +239,25 @@ class FakeBff:
         # The caller's pins in PROJECT, top first (coho-data doc 67). ENTRY reads as live on
         # every ref; any other id as absent, made on a branch and not merged.
         self.pins: list[str] = []
+        # Webhooks (coho-data doc 70), by id, as created: the full URL in `url`, the
+        # headers' names in `headers`. Their values and the secrets are kept apart, as the
+        # server keeps them sealed, for a test to read. False stands for a deployment
+        # with no key to seal with, which refuses them with WEBHOOKS_UNCONFIGURED.
+        self.webhooks: dict[str, dict[str, Any]] = {}
+        self.webhook_headers: dict[str, dict[str, str]] = {}
+        self.webhook_secrets: dict[str, str] = {}
+        # Each webhook's log, newest first: {"delivery", "body", "attempts"}, as one
+        # delivery's read answers it. `add_delivery` writes one.
+        self.webhook_deliveries: dict[str, list[dict[str, Any]]] = {}
+        self.webhooks_configured = True
+        self._clock = 0
         # Whether the caller is an admin of ACCOUNT, as the account's usage report asks.
         # False stands for a member, refused as authoring refuses one.
         self.account_admin = True
         self._install()
         self._install_assets()
         self._install_usage()
+        self._install_webhooks()
 
     @property
     def url(self) -> str:
@@ -1036,6 +1172,311 @@ class FakeBff:
         ).respond_with_handler(complete)
         s.expect_request(f"{r}/assets", method="GET").respond_with_handler(list_assets)
         s.expect_request(re.compile(rf"^{re.escape(r)}/assets/{uid}$")).respond_with_handler(one)
+
+    def _install_webhooks(self) -> None:
+        """A project's webhooks (coho-data doc 70), kept in memory, and each one's log.
+
+        No request is ever sent: `test` records a ``ping`` that succeeded at once, as if
+        the cell's sender had sent it, and `add_delivery` writes any other a test needs.
+        The URL, event, header, and limit refusals are the server's, with its codes; a URL
+        on ``localhost`` or a private or link-local literal is ``WEBHOOK_URL_REFUSED``.
+        """
+        s = self.server
+        p = f"/api/v1/accounts/{ACCOUNT}/projects/{PROJECT}"
+        uid = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+        route = re.compile(
+            rf"^{re.escape(p)}/webhooks(?:/(?P<id>{uid})"
+            rf"(?:/(?P<verb>rotate-secret|test|redeliver|deliveries)"
+            rf"(?:/(?P<delivery>{uid})(?P<again>/redeliver)?)?)?)?$"
+        )
+
+        def unconfigured() -> Response:
+            return problem(503, "WEBHOOKS_UNCONFIGURED", "Webhooks are not configured")
+
+        def webhooks(request: Request) -> Response:
+            self._record(request)
+            match = route.match(request.path)
+            assert match is not None
+            webhook_id, verb = match["id"], match["verb"]
+            if webhook_id is None:
+                if request.method == "POST":
+                    return create(request)
+                return ok(
+                    {
+                        "webhooks": [self._webhook_doc(w, full=False) for w in self.webhooks],
+                        "limit": WEBHOOK_LIMIT,
+                    }
+                )
+            if webhook_id not in self.webhooks:
+                return problem(404, "NOT_FOUND", "Webhook not found")
+            if verb is None:
+                if request.method == "PATCH":
+                    return update(webhook_id, request.get_json())
+                if request.method == "DELETE":
+                    del self.webhooks[webhook_id]
+                    self.webhook_deliveries.pop(webhook_id, None)
+                    return Response(status=204)
+                if not self.webhooks_configured:
+                    return unconfigured()
+                return ok(self._webhook_doc(webhook_id, full=True))
+            if verb == "rotate-secret":
+                if not self.webhooks_configured:
+                    return unconfigured()
+                self.webhook_secrets[webhook_id] = _new_secret()
+                until = "2026-11-03T14:00:00Z"
+                self.webhooks[webhook_id]["previousSecretUntil"] = until
+                return ok(
+                    {"secret": self.webhook_secrets[webhook_id], "previousSecretUntil": until}
+                )
+            if verb == "test":
+                if not self.webhooks[webhook_id]["enabled"]:
+                    return problem(
+                        400,
+                        "WEBHOOK_INVALID",
+                        "This webhook is disabled. Enable it to send it a test event",
+                    )
+                delivery = self.add_delivery(
+                    webhook_id, type="ping", ref=None, state="succeeded", status=200
+                )
+                return ok({"delivery": delivery}, 202)
+            if verb == "redeliver":
+                since = request.args.get("since")
+                if not since:
+                    return problem(400, "BAD_REQUEST", "Say since when: ?since= an ISO 8601 time")
+                moment = _moment(since)
+                if moment is None:
+                    return problem(
+                        400,
+                        "BAD_REQUEST",
+                        "since is an ISO 8601 time, such as 2026-11-02T14:00:00Z",
+                    )
+                count = 0
+                for d in self.webhook_deliveries.get(webhook_id, []):
+                    created = _moment(d["delivery"]["createdAt"])
+                    if d["delivery"]["state"] == "failed" and created and created >= moment:
+                        _pending(d["delivery"])
+                        count += 1
+                return ok({"redelivered": count}, 202)
+            # deliveries
+            if match["delivery"] is None:
+                return deliveries(webhook_id, request)
+            found = next(
+                (
+                    d
+                    for d in self.webhook_deliveries.get(webhook_id, [])
+                    if d["delivery"]["id"] == match["delivery"]
+                ),
+                None,
+            )
+            if found is None:
+                return problem(404, "NOT_FOUND", "Delivery not found")
+            if match["again"]:
+                if found["delivery"]["state"] not in ("succeeded", "failed"):
+                    return problem(
+                        400,
+                        "BAD_REQUEST",
+                        "The delivery is still being sent; it can be sent again once it has "
+                        "succeeded or failed",
+                    )
+                _pending(found["delivery"])
+                return ok({"redelivered": 1}, 202)
+            return ok(found)
+
+        def create(request: Request) -> Response:
+            if not self.webhooks_configured:
+                return unconfigured()
+            body = request.get_json()
+            if not body.get("url"):
+                return problem(400, "WEBHOOK_INVALID", "Give the URL to send to")
+            if body.get("events") is None:
+                return problem(
+                    400,
+                    "WEBHOOK_INVALID",
+                    "Name the events to send: a type, a group such as 'tag.*', or '*'",
+                )
+            refused = _check_webhook(body, change=False)
+            if refused is not None:
+                return refused
+            if len(self.webhooks) >= WEBHOOK_LIMIT:
+                return problem(
+                    400,
+                    "WEBHOOK_LIMIT_REACHED",
+                    f"A project may have {WEBHOOK_LIMIT} webhooks, and this one has them all. "
+                    "Delete one first",
+                )
+            webhook_id = str(uuid.uuid4())
+            headers = body.get("headers") or {}
+            self.webhooks[webhook_id] = {
+                "id": webhook_id,
+                "url": body["url"],
+                "description": (body.get("description") or "").strip() or None,
+                "events": list(body["events"]),
+                "refs": body.get("refs"),
+                "headers": list(headers),
+                "enabled": body.get("enabled") is not False,
+                "createdBy": ACTOR,
+                "createdAt": "2026-11-02T14:00:00Z",
+            }
+            self.webhook_headers[webhook_id] = dict(headers)
+            self.webhook_secrets[webhook_id] = _new_secret()
+            self.webhook_deliveries[webhook_id] = []
+            return ok(
+                {
+                    "secret": self.webhook_secrets[webhook_id],
+                    "webhook": self._webhook_doc(webhook_id, full=True),
+                },
+                201,
+            )
+
+        def update(webhook_id: str, body: dict[str, Any]) -> Response:
+            if not self.webhooks_configured and "url" in body:
+                return unconfigured()
+            refused = _check_webhook(body, change=True)
+            if refused is not None:
+                return refused
+            w = self.webhooks[webhook_id]
+            for key in ("url", "events"):
+                if key in body:
+                    w[key] = body[key]
+            if "description" in body:
+                w["description"] = (body["description"] or "").strip() or None
+            if "refs" in body:
+                w["refs"] = body["refs"] or None
+            if "headers" in body:
+                w["headers"] = list(body["headers"])
+                self.webhook_headers[webhook_id] = dict(body["headers"])
+            if "enabled" in body:
+                w["enabled"] = bool(body["enabled"])
+                w["disabledReason"] = None
+                w["disabledAt"] = None if w["enabled"] else "2026-11-02T15:00:00Z"
+                if w["enabled"]:
+                    w["failingSince"] = None
+            w["updatedAt"] = "2026-11-02T15:00:00Z"
+            return ok(self._webhook_doc(webhook_id, full=True))
+
+        def deliveries(webhook_id: str, request: Request) -> Response:
+            state = request.args.get("state")
+            if state and state not in WEBHOOK_DELIVERY_STATES:
+                return problem(
+                    400, "BAD_REQUEST", f"state is one of {', '.join(WEBHOOK_DELIVERY_STATES)}"
+                )
+            limit = int(request.args.get("limit", 50))
+            if not 1 <= limit <= 200:
+                return problem(400, "BAD_REQUEST", "limit is 1 to 200")
+            bounds = {}
+            for name in ("since", "before"):
+                if name in request.args:
+                    moment = _moment(request.args[name])
+                    if moment is None:
+                        return problem(
+                            400,
+                            "BAD_REQUEST",
+                            f"{name} is an ISO 8601 time, such as 2026-11-02T14:00:00Z",
+                        )
+                    bounds[name] = moment
+            rows = []
+            for d in self.webhook_deliveries.get(webhook_id, []):
+                row = d["delivery"]
+                created = _moment(row["createdAt"])
+                assert created is not None
+                if state and row["state"] != state:
+                    continue
+                if request.args.get("type") and row["type"] != request.args["type"]:
+                    continue
+                if "since" in bounds and created < bounds["since"]:
+                    continue
+                if "before" in bounds and created >= bounds["before"]:
+                    continue
+                rows.append(row)
+            return ok({"deliveries": rows[:limit]})
+
+        s.expect_request(route).respond_with_handler(webhooks)
+
+        def events(request: Request) -> Response:
+            self._record(request)
+            groups = list(dict.fromkeys(e.split(".")[0] + ".*" for e in WEBHOOK_EVENTS))
+            return ok({"events": WEBHOOK_EVENTS, "groups": groups})
+
+        s.expect_request(f"{p}/webhook-events", method="GET").respond_with_handler(events)
+
+    def add_delivery(
+        self,
+        webhook_id: str,
+        *,
+        type: str = "entries.changed",
+        ref: str | None = "dev",
+        state: str = "failed",
+        status: int | None = 503,
+        error_kind: str | None = None,
+        error: str | None = None,
+        response: str | None = None,
+        created_at: str | None = None,
+    ) -> str:
+        """Writes a delivery to a webhook's log, newest first, as the sender would have
+        left it, and returns its id. A finished one has one attempt: ``status`` and
+        ``response`` when the receiver answered, or ``error_kind`` and ``error`` when it
+        did not (``status=None``). Each is a minute after the last unless ``created_at``.
+        """
+        self._clock += 1
+        clock = self._clock
+        created = created_at or f"2026-11-02T{12 + clock // 60:02d}:{clock % 60:02d}:00Z"
+        delivery_id = str(uuid.uuid4())
+        finished = state in ("succeeded", "failed")
+        kind = error_kind or ("http" if status is not None and not 200 <= status < 300 else None)
+        answered = status is not None
+        excerpt = response if response is not None else ("ok" if kind is None else "Unavailable")
+        attempt = {
+            "n": 1,
+            "startedAt": created,
+            "durationMs": 140,
+            "requestHeaders": {
+                "content-type": "application/json",
+                "webhook-id": f"evt_{delivery_id[:8]}",
+                "webhook-signature": "v1,••••",
+            },
+            "responseStatus": status,
+            "responseHeaders": {"content-type": "text/plain"} if answered else None,
+            "responseBody": excerpt if answered else None,
+            "errorKind": kind,
+            "error": error,
+        }
+        self.webhook_deliveries.setdefault(webhook_id, []).insert(
+            0,
+            {
+                "delivery": {
+                    "id": delivery_id,
+                    "eventId": f"evt_{delivery_id[:8]}",
+                    "type": type,
+                    "ref": ref,
+                    "state": state,
+                    "attempts": 1 if finished else 0,
+                    "nextAttemptAt": None if finished else created,
+                    "lastStatus": status if finished else None,
+                    "lastErrorKind": kind if finished else None,
+                    "createdAt": created,
+                    "finishedAt": created if finished else None,
+                },
+                "body": json.dumps({"type": type, "ref": ref}),
+                "attempts": [attempt] if finished else [],
+            },
+        )
+        return delivery_id
+
+    def _webhook_doc(self, webhook_id: str, *, full: bool) -> dict[str, Any]:
+        w = dict(self.webhooks[webhook_id])
+        url = str(w.pop("url"))
+        w["host"] = urlsplit(url).hostname or ""
+        if full:
+            w["url"] = url
+        log = [d["delivery"] for d in self.webhook_deliveries.get(webhook_id, [])]
+        finished = [d for d in log if d["state"] in ("succeeded", "failed")]
+        w["health"] = {
+            "lastState": finished[0]["state"] if finished else None,
+            "lastAt": finished[0]["finishedAt"] if finished else None,
+            "succeeded24h": sum(1 for d in finished if d["state"] == "succeeded"),
+            "failed24h": sum(1 for d in finished if d["state"] == "failed"),
+        }
+        return {k: v for k, v in w.items() if v is not None}
 
     def _install_usage(self) -> None:
         """Usage reports (doc 41 §7.1): `USAGE` for the project, summed for the account."""

@@ -8,6 +8,16 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- Webhooks (coho-data doc 70): `project.webhooks` lists, reads, makes, changes, and deletes
+  a project's webhooks, the endpoints Coho calls when something happens in it; `events()`
+  lists what they can subscribe to. `create` answers the signing secret once
+  (`CreatedWebhook.secret`), and `rotate_secret` a new one, with when the previous one
+  stops signing. `test` queues a `ping`; `deliveries` reads the log, filtered by state,
+  event type, and time; `delivery` one delivery with the body that was signed and every
+  attempt; `redeliver` sends one again and `redeliver_failed(since)` every failure since a
+  time. Owners only. `WebhookInvalid` and its four particular cases, `WebhookLimitReached`,
+  and `WebhooksUnconfigured` are the refusals. `FakeBff` keeps webhooks in memory, and
+  `add_delivery` writes their log. Needs a server with doc 70's routes.
 - `project.ref(name, at=seq)`: the ref read as it was at that seq (coho-data doc 59 HI-4),
   for every read through it: types, traits, entries, their history and references, and
   assets. `Ref.at` says which. Writes through it carry `at` too, for the server to refuse,
