@@ -39,6 +39,9 @@ USER = "55555555-5555-4555-8555-555555555555"
 # The one invitation token the fake recognizes.
 INVITATION_TOKEN = "invite-token-abc"
 
+# The most pins one person keeps in one project, as the server caps it.
+PIN_LIMIT = 20
+
 # How many invalid entries a TAG_CONTENT_INVALID lists, as the server caps it.
 # `entryCount` has the total.
 INVALID_ENTRIES_SHOWN = 100
@@ -110,6 +113,9 @@ class FakeBff:
         self.blobs: dict[str, bytes] = {}
         self.uploads: dict[str, dict[str, Any]] = {}
         self.assets: dict[str, dict[str, Any]] = {}
+        # The caller's pins in PROJECT, top first (coho-data doc 67). ENTRY reads as live on
+        # every ref; any other id as absent, made on a branch and not merged.
+        self.pins: list[str] = []
         # Whether the caller is an admin of ACCOUNT, as the account's usage report asks.
         # False stands for a member, refused as authoring refuses one.
         self.account_admin = True
@@ -460,6 +466,51 @@ class FakeBff:
 
         s.expect_request(f"{p}/roles/{ACTOR}", method="PUT").respond_with_handler(grant)
 
+        # --- pins: the caller's own, the project's rather than a ref's ---
+        def list_pins(request: Request) -> Response:
+            self._record(request)
+            ref = request.args.get("ref")
+            if not ref:
+                return problem(400, "BAD_REQUEST", "Name the ref to read the pins on: ?ref=")
+            return ok({"ref": ref, "pins": [self._pin(entry_id) for entry_id in self.pins]})
+
+        def order_pins(request: Request) -> Response:
+            self._record(request)
+            order = request.get_json().get("entries") or []
+            if len(order) != len(set(order)) or set(order) != set(self.pins):
+                return problem(
+                    400,
+                    "BAD_REQUEST",
+                    "The order must name each pinned entry once, and nothing else: "
+                    f"{len(self.pins)} pinned, {len(order)} named",
+                )
+            self.pins = list(order)
+            return Response(status=204)
+
+        def pin(request: Request) -> Response:
+            self._record(request)
+            entry_id = request.path.rsplit("/", 1)[-1]
+            if request.method == "DELETE":
+                if entry_id in self.pins:
+                    self.pins.remove(entry_id)
+                return Response(status=204)
+            if entry_id not in self.pins:
+                if len(self.pins) >= PIN_LIMIT:
+                    return problem(
+                        400,
+                        "PIN_LIMIT",
+                        f"You have {PIN_LIMIT} pins in this project, as many as it keeps. "
+                        "Unpin one first",
+                    )
+                self.pins.insert(0, entry_id)
+            return Response(status=204)
+
+        s.expect_request(f"{p}/pins", method="GET").respond_with_handler(list_pins)
+        s.expect_request(f"{p}/pins", method="PUT").respond_with_handler(order_pins)
+        s.expect_request(
+            re.compile(rf"^{re.escape(p)}/pins/[0-9a-f-]{{36}}$")
+        ).respond_with_handler(pin)
+
         def issue_key(request: Request) -> Response:
             self._record(request)
             body = request.get_json()
@@ -614,6 +665,15 @@ class FakeBff:
         )
 
         s.expect_request(f"{r}/types/blogPost", method="GET").respond_with_handler(get_type)
+        # A singleton (coho-data doc 66): one entry, at the fixed slug `site-settings`.
+        s.expect_request(f"{r}/types/siteSettings", method="GET").respond_with_json(
+            {
+                "slug": "siteSettings",
+                "version": "t1",
+                "definition": {"_name": "Site settings", "singleton": True, "fields": []},
+            },
+            headers={"ETag": '"t1"'},
+        )
         s.expect_request(f"{r}/types/blogPost", method="PUT").respond_with_handler(put_type)
         s.expect_request(f"{r}/types/newType", method="GET").respond_with_handler(
             lambda req: problem(404, "NOT_FOUND", "no such type")
@@ -650,10 +710,20 @@ class FakeBff:
 
         def create_entry(request: Request) -> Response:
             self._record(request)
-            body = request.get_json()
+            # A copy: the request's own body stays as sent, for a test to read.
+            body = dict(request.get_json())
+            if "slug" not in body:
+                if body["type"] != "siteSettings":
+                    return problem(
+                        400,
+                        "BAD_REQUEST",
+                        "An entry needs a slug. Only a singleton's entry may leave it out, "
+                        f"and '{body['type']}' is not one",
+                    )
+                body["slug"] = "site-settings"
             if body["slug"] == "taken":
                 return problem(400, "SLUG_CONFLICT", "slug in use", slug="taken", ref="dev")
-            if "title" not in body["fields"]:
+            if body["type"] != "siteSettings" and "title" not in body["fields"]:
                 return problem(
                     400,
                     "VALIDATION_FAILED",
@@ -1032,6 +1102,18 @@ class FakeBff:
         if file["mediaType"] in ("image/png", "image/jpeg", "image/gif", "image/webp"):
             doc["imageUrl"] = f"{base}/i/{file['sha256']}/{name}"
         return doc
+
+    def _pin(self, entry_id: str) -> dict[str, Any]:
+        if entry_id == ENTRY:
+            return {
+                "entryId": ENTRY,
+                "state": "live",
+                "name": "Hello",
+                "slug": "hello",
+                "type": "blogPost",
+                "pinnedAt": "now",
+            }
+        return {"entryId": entry_id, "state": "absent", "pinnedAt": "now"}
 
     def _entry(self, i: int) -> dict[str, Any]:
         return {

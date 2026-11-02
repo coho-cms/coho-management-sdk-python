@@ -40,6 +40,12 @@ e = dev.entries.create(type="blogPost", slug="hello", fields={"title": {"en-US":
 e.id, e.etag
 ```
 
+A singleton type (`dev.types.get("siteSettings").singleton`) has one entry, at the type's slug in kebab case. Pass `slug=None` and the server gives it that slug; any other slug is refused, and so is a second entry (`SlugConflict`, naming the first).
+
+```python
+dev.entries.create(type="siteSettings", slug=None, fields={"siteName": "Acme"})   # site-settings
+```
+
 ### Updating: the ETag travels with the object
 
 ```python
@@ -125,3 +131,15 @@ except ValidationFailed as exc:
 ```
 
 `SlugConflict` carries `context["slug"]` and `context["ref"]`.
+
+## Pins
+
+A person's pinned entries, kept at hand in the portal (coho-data doc 67). They belong to the caller and to the project, not to a ref, so a pin follows its entry from branch to branch. Any role may pin, up to 20 (`PinLimit` past that).
+
+```python
+pins = project.pins.list("dev")             # top first, each as it reads on dev
+[(p.entry_id, p.state, p.name) for p in pins.pins]   # state: live, deleted, or absent
+project.pins.add(entry_id)                  # on top; again changes nothing
+project.pins.order([b, a])                  # every pinned id once, top first
+project.pins.remove(entry_id)               # not pinned is not an error
+```

@@ -438,6 +438,11 @@ class ContentType:
         return str(self.raw.get("kind") or self.definition.get("kind") or "content")
 
     @property
+    def singleton(self) -> bool:
+        """Whether the type has one entry on a ref, at a fixed slug (coho-data doc 66)."""
+        return self.definition.get("singleton") is True
+
+    @property
     def extends(self) -> str | None:
         """The slug of the type this one extends, or ``None`` for a root."""
         parent = self.definition.get("extends")
@@ -1006,6 +1011,53 @@ class ProjectRole:
             role=str(raw.get("role", "")),
             granted_by=raw.get("grantedBy"),
             granted_at=raw.get("grantedAt"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class Pin:
+    """One of the caller's pinned entries (coho-data doc 67), as it reads on a ref.
+
+    ``state`` is ``live``, with the entry's name, slug and type there; ``deleted`` on
+    this ref; or ``absent``, not on this ref, as an entry made on another branch is until
+    it is merged. A pin that does not resolve has the name and slug the entry last had.
+    """
+
+    entry_id: str
+    state: str
+    name: str | None
+    slug: str | None
+    type: str | None
+    pinned_at: str | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> Pin:
+        return cls(
+            entry_id=str(raw.get("entryId", "")),
+            state=str(raw.get("state", "")),
+            name=raw.get("name"),
+            slug=raw.get("slug"),
+            type=raw.get("type"),
+            pinned_at=raw.get("pinnedAt"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
+class Pins:
+    """The caller's pins in a project, top first, each read on ``ref``."""
+
+    ref: str
+    pins: list[Pin]
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> Pins:
+        return cls(
+            ref=str(raw.get("ref", "")),
+            pins=[Pin.from_dict(p) for p in raw.get("pins") or []],
             raw=raw,
         )
 

@@ -315,6 +315,43 @@ def test_roles_and_keys(coho: Coho, bff: FakeBff) -> None:
     assert info.value.code == "BAD_REQUEST"
 
 
+def test_pins_are_the_callers_own_top_first_and_read_on_a_ref(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    other = "66666666-6666-4666-8666-666666666666"
+    project.pins.add(other)
+    project.pins.add(ENTRY)
+    project.pins.add(ENTRY)
+    pins = project.pins.list("dev")
+    assert pins.ref == "dev" and bff.last().args["ref"] == "dev"
+    assert [(p.entry_id, p.state) for p in pins.pins] == [(ENTRY, "live"), (other, "absent")]
+    assert pins.pins[0].name == "Hello" and pins.pins[0].type == "blogPost"
+
+    project.pins.order([other, ENTRY])
+    assert bff.last().get_json() == {"entries": [other, ENTRY]}
+    with pytest.raises(e.CohoError) as info:
+        project.pins.order([other])
+    assert info.value.code == "BAD_REQUEST"
+
+    project.pins.remove(other)
+    project.pins.remove(other)
+    assert [p.entry_id for p in project.pins.list("dev").pins] == [ENTRY]
+
+
+def test_the_twenty_first_pin_is_refused(coho: Coho, bff: FakeBff) -> None:
+    project = coho.account("acme").project(PROJECT)
+    bff.pins = [f"00000000-0000-4000-8000-{i:012d}" for i in range(project.pins.LIMIT)]
+    with pytest.raises(e.PinLimit):
+        project.pins.add(ENTRY)
+
+
+def test_a_singleton_entry_is_created_without_a_slug(coho: Coho, bff: FakeBff) -> None:
+    ref = coho.account("acme").project(PROJECT).ref("dev")
+    assert ref.types.get("siteSettings").singleton is True
+    assert ref.types.get("blogPost").singleton is False
+    entry = ref.entries.create(type="siteSettings", slug=None, fields={"siteName": "Acme"})
+    assert "slug" not in bff.last().get_json() and entry.slug == "site-settings"
+
+
 def test_invite_and_last_admin(coho: Coho) -> None:
     acct = coho.account("acme")
     issued = acct.invitations.create("jane@acme.example", role="member")

@@ -396,6 +396,7 @@ class Project:
         self.roles = RolesApi(self)
         self.delivery_keys = DeliveryKeysApi(self)
         self.tokens = ProjectTokensApi(self)
+        self.pins = PinsApi(self)
 
     def info(self, *, refresh: bool = False) -> m.ProjectInfo:
         if self._info is None or refresh:
@@ -785,6 +786,35 @@ class RolesApi:
         self._t.delete(f"{self._p.path}/roles/{segment(actor_id)}")
 
 
+class PinsApi:
+    """The caller's pinned entries in this project (coho-data doc 67): their own, never
+    another person's, and the project's rather than a ref's, so a pin follows its entry
+    from branch to branch. Any role may pin. At most 20 (``PIN_LIMIT``).
+    """
+
+    LIMIT = 20
+
+    def __init__(self, project: Project) -> None:
+        self._p = project
+        self._t = project._t
+
+    def list(self, ref: str) -> m.Pins:
+        """Top first, each as it reads on ``ref``: live, deleted there, or absent."""
+        return m.Pins.from_dict(self._t.get(f"{self._p.path}/pins", params={"ref": ref}).body)
+
+    def add(self, entry_id: str) -> None:
+        """On top. Pinning what is pinned already changes nothing."""
+        self._t.put(f"{self._p.path}/pins/{segment(entry_id)}")
+
+    def remove(self, entry_id: str) -> None:
+        """Unpinning what is not pinned changes nothing, and is not an error."""
+        self._t.delete(f"{self._p.path}/pins/{segment(entry_id)}")
+
+    def order(self, entry_ids: builtins.list[str]) -> None:
+        """The whole order, top first: every pinned entry once, and nothing else."""
+        self._t.put(f"{self._p.path}/pins", {"entries": entry_ids})
+
+
 class ProjectTokensApi:
     """API keys for automation, one project and one role each (doc 29). Needs ``owner``.
 
@@ -1063,8 +1093,12 @@ class EntriesApi:
         resp = self._t.get(f"{self._r.path}/entries/{segment(entry_id)}")
         return m.Entry.from_dict(resp.body, etag=resp.etag)
 
-    def create(self, *, type: str, slug: str, fields: JSON) -> m.Entry:
-        body = {"type": type, "slug": slug, "fields": fields}
+    def create(self, *, type: str, slug: str | None, fields: JSON) -> m.Entry:
+        """``slug`` may be ``None`` only for a singleton type, whose entry the server gives
+        its fixed slug (coho-data doc 66)."""
+        body: JSON = {"type": type, "fields": fields}
+        if slug is not None:
+            body["slug"] = slug
         resp = self._t.post(f"{self._r.path}/entries", body)
         return m.Entry.from_dict(resp.body, etag=resp.etag)
 

@@ -20,6 +20,7 @@ Coho
         ├── environments: EnvironmentsApi   list, get, create, promote, unset, delete, history, rollback
         ├── tiers: TiersApi        list, create, move, delete
         ├── roles: RolesApi        list, grant, revoke
+        ├── pins: PinsApi          list(ref), add, remove, order    the caller's own
         ├── delivery_keys: DeliveryKeysApi  list, issue, revoke, set_public
         ├── export(ref, …), preview(ref) → Preview
         ├── usage(grain, start, end, meters) → UsageReport

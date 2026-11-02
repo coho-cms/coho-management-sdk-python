@@ -224,6 +224,20 @@ class TraitInUse(CohoError):
     code = "TRAIT_IN_USE"
 
 
+class SingletonBlocked(CohoError):
+    """A type cannot be made a singleton while its ref holds more than one of its entries,
+    a type extending it, or its entry under another slug; the detail says which
+    (coho-data doc 66). Turning the flag off is never refused."""
+
+    code = "SINGLETON_BLOCKED"
+
+
+class PinLimit(CohoError):
+    """The caller has as many pins in the project as it keeps, 20; unpin one first."""
+
+    code = "PIN_LIMIT"
+
+
 class RefNameTaken(CohoError):
     code = "REF_NAME_TAKEN"
 
@@ -463,6 +477,8 @@ _BY_CODE: dict[str, type[CohoError]] = {
         FieldConflict,
         TypeAbstract,
         TraitInUse,
+        SingletonBlocked,
+        PinLimit,
     )
 }
 for _code in ("INVITATION_USED", "INVITATION_ACCEPTED", "INVITATION_REVOKED", "INVITATION_EXPIRED"):
