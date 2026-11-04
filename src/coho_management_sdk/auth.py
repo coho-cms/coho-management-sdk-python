@@ -13,6 +13,12 @@ for it. So the CLI obtains the token itself:
 4. ``COHO_ACCESS_TOKEN``, if set, wins over the store. For CI; it carries a person's
    identity and is a stopgap until service accounts exist.
 
+On a machine with no browser (an SSH session, a container) the loopback flow cannot
+finish: the browser is elsewhere, and its ``localhost`` is not this machine. So
+``login(mode="paste")`` names the sign-in service's own ``/cli/code`` page as the
+redirect instead. The page shows the code, the person pastes it into ``read_code``,
+and it is exchanged exactly as the loopback flow's is (coho-data doc 73).
+
 ⚠️ Cognito requires the callback URL to match **exactly**, port included, so the
 app client must be registered with ``http://localhost:<callback_port>/callback``
 and the profile must use the same port. There is no dynamic-port loopback rule as
@@ -39,7 +45,7 @@ import webbrowser
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -242,6 +248,12 @@ def _pkce_pair() -> tuple[str, str]:
 _SIGNED_IN_PATH = "/cli/signed-in"
 _FAILED_PATH = "/cli/sign-in-failed"
 
+# The sign-in service's page that shows a code for pasting (doc 73 HL-1). Registered for
+# `coho-cli` exactly, so this is the redirect URI to the letter.
+PASTE_PATH = "/cli/code"
+
+LoginMode = Literal["loopback", "paste"]
+
 
 class _Callback:
     """What the listeners share: the expected state, where the browser goes, the first answer."""
@@ -317,6 +329,8 @@ def _domain(profile: Profile) -> str:
 def login(
     profile: Profile,
     *,
+    mode: LoginMode = "loopback",
+    read_code: Callable[[], str] | None = None,
     open_browser: Callable[[str], object] | None = None,
     timeout: float = 300.0,
     port: int | None = None,
@@ -327,17 +341,34 @@ def login(
 
     Args:
         profile: needs ``oidc_domain``, ``client_id`` and ``scopes``.
-        open_browser: how to open the URL; defaults to ``webbrowser.open``.
-        timeout: seconds to wait for the callback.
-        port: overrides ``profile.callback_port``; ``0`` picks a free one (only
-            useful with a provider that allows any loopback port).
-        on_url: called with the authorization URL, for printing it as a fallback.
+        mode: ``"loopback"`` (the default) listens on ``localhost`` for the browser to
+            come back; ``"paste"`` is for a machine with no browser, where the sign-in
+            ends on a page that shows a code and ``read_code`` returns it.
+        read_code: ``"paste"`` only, and required there: asks the person for the code
+            and returns it. Called after ``on_url``. The caller owns the prompt.
+        open_browser: ``"loopback"`` only: how to open the URL; defaults to
+            ``webbrowser.open``. ``"paste"`` never opens one.
+        timeout: ``"loopback"`` only: seconds to wait for the callback. A pasted code
+            has its own limit, five minutes at the sign-in service.
+        port: ``"loopback"`` only: overrides ``profile.callback_port``; ``0`` picks a
+            free one.
+        on_url: called with the authorization URL, for printing it.
     """
     if not profile.can_login:
         raise AuthError(
             f"profile '{profile.name}' is missing oidc_domain or client_id; "
             "configure them, or pass a token with `coho login --token`"
         )
+    if mode == "paste":
+        if read_code is None:
+            raise ValueError("login(mode='paste') needs read_code")
+        if port is not None or open_browser is not None:
+            raise ValueError("port and open_browser are for the loopback flow")
+        return _login_by_paste(profile, read_code=read_code, on_url=on_url, http=http)
+    if mode != "loopback":
+        raise ValueError(f"unknown login mode {mode!r}; expected 'loopback' or 'paste'")
+    if read_code is not None:
+        raise ValueError("read_code is for login(mode='paste')")
     state = secrets.token_urlsafe(32)
     verifier, challenge = _pkce_pair()
     listen_port = profile.callback_port if port is None else port
@@ -376,6 +407,42 @@ def login(
     return exchange_code(
         profile, code=result["code"], verifier=verifier, redirect_uri=redirect_uri, http=http
     )
+
+
+def _login_by_paste(
+    profile: Profile,
+    *,
+    read_code: Callable[[], str],
+    on_url: Callable[[str], None] | None,
+    http: httpx.Client | None,
+) -> TokenSet:
+    """The copy-the-code flow (doc 73 §2): no listener, and no browser opened here.
+
+    ``state`` is sent, as every authorize request sends it, but never asked back (HL-5):
+    PKCE already binds the code to this verifier, so a code from any other sign-in fails
+    at the token endpoint, and asking for ``code#state`` would be more to copy and nothing
+    to check.
+    """
+    state = secrets.token_urlsafe(32)
+    verifier, challenge = _pkce_pair()
+    redirect_uri = _domain(profile) + PASTE_PATH
+    url = authorize_url(profile, state=state, challenge=challenge, redirect_uri=redirect_uri)
+    if on_url:
+        on_url(url)
+    # Whitespace never belongs to a code: drop a trailing newline, or a break a terminal
+    # or a wrapped page put inside it.
+    code = "".join(read_code().split())
+    if not code:
+        raise AuthError("no code was pasted")
+    try:
+        return exchange_code(
+            profile, code=code, verifier=verifier, redirect_uri=redirect_uri, http=http
+        )
+    except AuthError as exc:
+        raise AuthError(
+            f"{exc}. A code works once, within five minutes, and only in the terminal "
+            "that printed its URL: sign in again for a new one"
+        ) from exc
 
 
 def exchange_code(
@@ -502,6 +569,8 @@ __all__ = [
     "TokenProvider",
     "token_store_for",
     "login",
+    "LoginMode",
+    "PASTE_PATH",
     "refresh",
     "authorize_url",
     "claims",

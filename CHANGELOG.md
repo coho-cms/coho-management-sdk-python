@@ -8,6 +8,13 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `auth.login(profile, mode="paste", read_code=…)`, for a machine with no browser (coho-data
+  doc 73): the sign-in ends on the sign-in service's `/cli/code` page, which shows a code,
+  and `read_code` returns what the person pasted. No listener, and no browser opened. The
+  code is exchanged as the loopback flow's is, bound to this call's PKCE verifier; a refusal
+  says a code works once, within five minutes. `auth.PASTE_PATH` is the page's path and
+  `auth.LoginMode` the two modes. `"loopback"` stays the default, unchanged. Needs a sign-in
+  service with `/cli/code`, and `coho-cli` registered for it.
 - Webhooks (coho-data doc 70): `project.webhooks` lists, reads, makes, changes, and deletes
   a project's webhooks, the endpoints Coho calls when something happens in it; `events()`
   lists what they can subscribe to. `create` answers the signing secret once

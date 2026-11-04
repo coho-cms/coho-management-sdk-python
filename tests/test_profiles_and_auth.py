@@ -251,6 +251,60 @@ def test_a_callback_with_the_wrong_state_is_sent_to_the_failure_page() -> None:
     assert landed == [(303, "https://idp.example/cli/sign-in-failed")]
 
 
+def test_a_pasted_code_is_exchanged_against_the_code_page() -> None:
+    """No listener and no browser: the URL is handed out, the code comes back by hand (doc 73)."""
+    from urllib.parse import parse_qs, urlparse
+
+    seen: dict[str, str] = {}
+
+    def token_endpoint(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(httpx.QueryParams(request.content.decode())))
+        return httpx.Response(
+            200, json={"access_token": "at", "refresh_token": "rt", "expires_in": 60}
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(token_endpoint))
+    profile = Profile(name="p", oidc_domain="https://idp.example/", client_id="coho-cli")
+    urls: list[str] = []
+    asked: list[str] = []
+
+    def read_code() -> str:
+        asked.append(urls[-1])  # the URL is out before the prompt
+        return "  the-code\n"
+
+    tokens = auth.login(profile, mode="paste", read_code=read_code, on_url=urls.append, http=http)
+
+    assert tokens.access_token == "at" and tokens.refresh_token == "rt"
+    q = {k: v[0] for k, v in parse_qs(urlparse(asked[0]).query).items()}
+    assert q["redirect_uri"] == "https://idp.example/cli/code"
+    assert q["code_challenge_method"] == "S256" and q["state"]
+    assert seen["code"] == "the-code" and seen["redirect_uri"] == "https://idp.example/cli/code"
+    assert "code_verifier" in seen and "client_secret" not in seen
+
+
+def test_a_refused_paste_says_what_a_code_is_good_for() -> None:
+    http = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(400, json={"error": "invalid_grant"})
+        )
+    )
+    profile = Profile(name="p", oidc_domain="idp.example", client_id="coho-cli")
+    with pytest.raises(AuthError, match="invalid_grant.*within five minutes"):
+        auth.login(profile, mode="paste", read_code=lambda: "stale", http=http)
+    with pytest.raises(AuthError, match="no code was pasted"):
+        auth.login(profile, mode="paste", read_code=lambda: " \n", http=http)
+
+
+def test_paste_and_loopback_options_do_not_mix() -> None:
+    profile = Profile(name="p", oidc_domain="idp.example", client_id="coho-cli")
+    with pytest.raises(ValueError, match="needs read_code"):
+        auth.login(profile, mode="paste")
+    with pytest.raises(ValueError, match="loopback flow"):
+        auth.login(profile, mode="paste", read_code=lambda: "c", port=8765)
+    with pytest.raises(ValueError, match="mode='paste'"):
+        auth.login(profile, read_code=lambda: "c", open_browser=lambda u: None, timeout=1)
+
+
 def test_login_requires_provider_config() -> None:
     with pytest.raises(AuthError):
         auth.login(Profile(name="p"), open_browser=lambda u: None, timeout=1)
