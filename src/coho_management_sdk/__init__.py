@@ -79,6 +79,7 @@ from .models import (
     Resolution,
     Tag,
     Tier,
+    TokenDescription,
     Trait,
     UsageMeter,
     UsageReport,
@@ -92,6 +93,7 @@ from .models import (
     WebhookHealth,
     WebhookList,
     WebhookSecret,
+    permissions_for,
 )
 from .profiles import Config, Context, Profile
 
@@ -168,6 +170,8 @@ __all__ = [
     "WebhookDeliveryDetail",
     "WebhookAttempt",
     "ProjectRole",
+    "TokenDescription",
+    "permissions_for",
     "RefInfo",
     "Resolution",
     "Tag",

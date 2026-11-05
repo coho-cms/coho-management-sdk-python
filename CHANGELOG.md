@@ -8,6 +8,15 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `Coho.describe_token()`: the project token in use describing itself (`GET /api/v1/token`,
+  coho-data doc 29 PT-12), as a `TokenDescription` with its account, project, label, role,
+  and expiry. A person is refused with `Unauthenticated`. `FakeBff` answers it for
+  `testing.PROJECT_TOKEN`, and `bff.project_tokens` holds what it knows.
+- `permissions_for(role)` and `models.ROLE_PERMISSIONS`: each project role's permissions,
+  as the server seeds them; `("*",)` (`models.ALL_PERMISSIONS`) for `owner`.
+- `Coho.credential_source` and `TokenProvider.source()`: where the token comes from,
+  `COHO_TOKEN`, `COHO_ACCESS_TOKEN`, `token` (given in code), `login` (stored by `coho
+  login`, refreshed), or `stored` (stored by `coho login --token`); `None` with none.
 - `auth.login(profile, mode="paste", read_code=…)`, for a machine with no browser (coho-data
   doc 73): the sign-in ends on the sign-in service's `/cli/code` page, which shows a code,
   and `read_code` returns what the person pasted. No listener, and no browser opened. The

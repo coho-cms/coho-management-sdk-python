@@ -91,6 +91,19 @@ ME = {
 # What GET .../projects lists. Module-level so a test can change it.
 PROJECTS = [{"id": PROJECT, "name": "Marketing site", "role": "owner"}]
 
+# A project token the fake knows (coho-data doc 29), and how it describes itself.
+PROJECT_TOKEN = "coho_pt_test"
+TOKEN_DESCRIPTION = {
+    "account": {"id": ACCOUNT, "name": "Acme"},
+    "project": {"id": PROJECT, "name": "Marketing site"},
+    "token": {
+        "id": "66666666-6666-4666-8666-666666666666",
+        "label": "CI deploy",
+        "role": "author",
+        "expiresAt": "2027-02-02T00:00:00Z",
+    },
+}
+
 PROJECT_DOC = {
     "id": PROJECT,
     "name": "Marketing site",
@@ -225,6 +238,8 @@ class FakeBff:
         # The bearer tokens `/me` answers for. Add one to stand for an identity that has
         # just finished setting up in a browser.
         self.tokens: set[str] = {"test-token"}
+        # The project tokens `/token` describes, by the token itself.
+        self.project_tokens: dict[str, dict[str, Any]] = {PROJECT_TOKEN: TOKEN_DESCRIPTION}
         self.snapshot_not_ready_times = 0
         # What a tag cut with `validate` finds wrong at the tag point, each shaped like an
         # item of the problem's `invalidEntries`. Empty means the content is valid.
@@ -280,6 +295,15 @@ class FakeBff:
             return ok(ME)
 
         s.expect_request("/api/v1/me", method="GET").respond_with_handler(me)
+
+        def describe_token(request: Request) -> Response:
+            self._record(request)
+            presented = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if presented not in self.project_tokens:
+                return problem(401, "UNAUTHENTICATED", "only a project token can describe itself")
+            return ok(self.project_tokens[presented])
+
+        s.expect_request("/api/v1/token", method="GET").respond_with_handler(describe_token)
         s.expect_request(
             re.compile(rf"^/api/v1/accounts/{GONE_ACCOUNT}(/.*)?$")
         ).respond_with_handler(lambda request: problem(404, "ACCOUNT_NOT_FOUND", "No such account"))

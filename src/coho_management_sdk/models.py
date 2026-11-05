@@ -995,6 +995,67 @@ class Tier:
 PROJECT_ROLES = ("viewer", "author", "maintainer", "release_manager", "owner")
 ACCOUNT_ROLES = ("admin", "member")
 
+ALL_PERMISSIONS = "*"
+"""What `owner` holds: every permission, including any added later."""
+
+# Each project role's permissions, as the server seeds them (coho-data `core-model`
+# `Roles`): each rung holds everything below it. ⚠️ A copy: change it with the server's.
+_VIEWER = ("content:read",)
+_AUTHOR = (*_VIEWER, "content:write", "branch:create", "promote:preview")
+_MAINTAINER = (*_AUTHOR, "merge", "release:tag", "promote:dev", "promote:qa")
+_RELEASE_MANAGER = (*_MAINTAINER, "promote:stage", "promote:prod", "branch:create_version")
+ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "viewer": _VIEWER,
+    "author": _AUTHOR,
+    "maintainer": _MAINTAINER,
+    "release_manager": _RELEASE_MANAGER,
+    "owner": (ALL_PERMISSIONS,),
+}
+
+
+def permissions_for(role: str | None) -> tuple[str, ...]:
+    """A project role's permissions; ``("*",)`` for ``owner``; empty for no or an unknown role.
+
+    ``promote:<tier>`` names a tier, which a project may not have: ``promote:preview`` is
+    granted to authors, but the ``preview`` tier is not created with a project.
+    """
+    return ROLE_PERMISSIONS.get(role or "", ())
+
+
+@dataclass(slots=True)
+class TokenDescription:
+    """``GET /api/v1/token``: the project token in use, describing itself (coho-data doc 29 PT-12).
+
+    A project token works for one project, with one role, never ``owner``.
+    """
+
+    account_id: str
+    account_name: str | None
+    project_id: str
+    project_name: str | None
+    token_id: str
+    label: str | None
+    role: str
+    expires_at: str | None
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> TokenDescription:
+        account = raw.get("account") or {}
+        project = raw.get("project") or {}
+        token = raw.get("token") or {}
+        return cls(
+            account_id=str(account.get("id", "")),
+            account_name=account.get("name"),
+            project_id=str(project.get("id", "")),
+            project_name=project.get("name"),
+            token_id=str(token.get("id", "")),
+            label=token.get("label"),
+            role=str(token.get("role", "")),
+            expires_at=token.get("expiresAt"),
+            raw=raw,
+        )
+
 
 @dataclass(slots=True)
 class ProjectRole:

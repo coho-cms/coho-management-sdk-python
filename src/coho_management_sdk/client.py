@@ -26,7 +26,7 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from . import models as m
-from .auth import TokenProvider, token_store_for
+from .auth import CredentialSource, TokenProvider, token_store_for
 from .errors import AssetTooLarge, CohoError, NotFound, PreconditionRequired, SnapshotNotReady
 from .profiles import Config, Profile
 from .transport import Response, Transport, segment
@@ -110,6 +110,22 @@ class Coho:
 
     def accounts(self) -> list[m.Membership]:
         return self.me().accounts
+
+    def describe_token(self) -> m.TokenDescription:
+        """The project token in use, describing itself: its account, project, and role.
+
+        The one call besides project content that a project token may make, so a tool
+        given only Coho's URL and a token can set itself up. A person is refused with
+        ``Unauthenticated``: they have :meth:`me`.
+        """
+        return m.TokenDescription.from_dict(self.transport.get(f"{API}/token").body)
+
+    @property
+    def credential_source(self) -> CredentialSource | None:
+        """Where this client's token comes from (see :data:`auth.CredentialSource`), or
+        ``None`` when it has none, or was given a token provider of its own."""
+        provider = self.token_provider
+        return provider.source() if isinstance(provider, TokenProvider) else None
 
     @property
     def uses_project_token(self) -> bool:

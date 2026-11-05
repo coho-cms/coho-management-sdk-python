@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from coho_management_sdk import Coho, Resolution
@@ -27,6 +29,64 @@ def test_bad_token_is_unauthenticated(bff: FakeBff) -> None:
     with pytest.raises(e.Unauthenticated) as info:
         Coho(bff.url, token="wrong").me()
     assert info.value.code == "UNAUTHENTICATED"
+
+
+def test_a_project_token_describes_its_account_project_and_role(bff: FakeBff) -> None:
+    from coho_management_sdk.testing import PROJECT_TOKEN
+
+    d = Coho(bff.url, token=PROJECT_TOKEN).describe_token()
+    assert (d.account_id, d.account_name) == (ACCOUNT, "Acme")
+    assert (d.project_id, d.project_name) == (PROJECT, "Marketing site")
+    assert (d.label, d.role, d.expires_at) == ("CI deploy", "author", "2027-02-02T00:00:00Z")
+    assert bff.last().path == "/api/v1/token"
+    # A person has /me instead.
+    with pytest.raises(e.Unauthenticated):
+        Coho(bff.url, token="test-token").describe_token()
+
+
+def test_each_role_holds_the_permissions_of_the_ones_below_it() -> None:
+    from coho_management_sdk import permissions_for
+    from coho_management_sdk.models import PROJECT_ROLES, ROLE_PERMISSIONS
+
+    assert set(ROLE_PERMISSIONS) == set(PROJECT_ROLES)
+    assert permissions_for("viewer") == ("content:read",)
+    assert "promote:preview" in permissions_for("author")
+    assert "promote:prod" not in permissions_for("maintainer")
+    assert "branch:create_version" in permissions_for("release_manager")
+    assert permissions_for("owner") == ("*",)
+    assert permissions_for(None) == () and permissions_for("nobody") == ()
+    ladder = [r for r in PROJECT_ROLES if r != "owner"]
+    for lower, higher in zip(ladder, ladder[1:], strict=False):
+        assert set(permissions_for(lower)) < set(permissions_for(higher))
+
+
+def test_the_client_says_where_its_token_comes_from(
+    bff: FakeBff, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from coho_management_sdk.auth import FileTokenStore, TokenSet
+
+    for name in ("COHO_TOKEN", "COHO_ACCESS_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    store = FileTokenStore(tmp_path / "tokens.json")
+    profile = Profile(name="p", url=bff.url)
+
+    def source(token: str | None = None) -> str | None:
+        return Coho(
+            bff.url, token_provider=TokenProvider(profile, store, token=token)
+        ).credential_source
+
+    assert source() is None
+    store.save("p", TokenSet(access_token="at"))
+    assert source() == "stored"
+    store.save("p", TokenSet(access_token="at", refresh_token="rt"))
+    assert source() == "login"
+    assert source(token="given") == "token"
+    monkeypatch.setenv("COHO_ACCESS_TOKEN", "person")
+    assert source() == "COHO_ACCESS_TOKEN"
+    monkeypatch.setenv("COHO_TOKEN", "coho_pt_x")
+    assert source() == "COHO_TOKEN"
+    # A provider of the caller's own says nothing about where it gets its token.
+    assert Coho(bff.url, token_provider=lambda: "x").credential_source is None
 
 
 def test_projects_lists_what_the_server_says_you_can_open(coho: Coho, bff: FakeBff) -> None:

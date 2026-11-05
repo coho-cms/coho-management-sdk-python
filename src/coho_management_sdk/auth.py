@@ -254,6 +254,15 @@ PASTE_PATH = "/cli/code"
 
 LoginMode = Literal["loopback", "paste"]
 
+CredentialSource = Literal["COHO_TOKEN", "COHO_ACCESS_TOKEN", "token", "login", "stored"]
+"""Where `TokenProvider` gets its token, in the order it looks:
+
+- ``COHO_TOKEN`` / ``COHO_ACCESS_TOKEN``: the environment variable;
+- ``token``: given to the client in code (``Coho(url, token=…)``);
+- ``login``: the profile's store, from ``coho login`` — it refreshes itself;
+- ``stored``: the profile's store, from ``coho login --token`` — it does not.
+"""
+
 
 class _Callback:
     """What the listeners share: the expected state, where the browser goes, the first answer."""
@@ -544,6 +553,19 @@ class TokenProvider:
             self._cached = self.store.load(self.profile.name)
         return self._cached
 
+    def source(self) -> CredentialSource | None:
+        """Where the token comes from, without refreshing it. ``None`` when there is none."""
+        if os.environ.get(ENV_PROJECT_TOKEN):
+            return "COHO_TOKEN"
+        if os.environ.get(ENV_ACCESS_TOKEN):
+            return "COHO_ACCESS_TOKEN"
+        if self._explicit:
+            return "token"
+        tokens = self.current()
+        if tokens is None:
+            return None
+        return "login" if tokens.refresh_token else "stored"
+
     def __call__(self) -> str | None:
         tokens = self.current()
         if tokens is None:
@@ -570,6 +592,7 @@ __all__ = [
     "token_store_for",
     "login",
     "LoginMode",
+    "CredentialSource",
     "PASTE_PATH",
     "refresh",
     "authorize_url",
