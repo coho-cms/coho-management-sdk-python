@@ -3,7 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["release-v*"]
   pull_request:
   workflow_dispatch:
 
@@ -82,7 +82,7 @@ jobs:
         # Dev versions come from commits after a release (0.2.1.dev3), never from
         # tags. A tag like v0.3.0.dev1 also makes every later build fail, because
         # setuptools-scm cannot number a dev build of a dev build.
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/release-v')
         run: |
           if [[ "$GITHUB_REF_NAME" =~ [.-]?dev[0-9]*$ ]]; then
             echo "::error::Don't tag dev versions: every commit after a release already builds one."
@@ -94,15 +94,16 @@ jobs:
         run: uv build --out-dir dist
 
       - name: Refuse a tag that is not a version in its standard form
-        # The version comes from the tag, but normalized to PEP 440: `v0.2.0-rc.1`
-        # builds 0.2.0rc1. A tag that does not match its own build would
-        # mislead anyone comparing the two, so the wheel's filename is the check.
-        if: startsWith(github.ref, 'refs/tags/v')
+        # The version comes from the tag less its `release-v`, but normalized to
+        # PEP 440: `release-v0.2.0-rc.1` builds 0.2.0rc1. A tag that does not match
+        # its own build would mislead anyone comparing the two, so the wheel's
+        # filename is the check.
+        if: startsWith(github.ref, 'refs/tags/release-v')
         run: |
-          expected="dist/coho_management_sdk-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+          expected="dist/coho_management_sdk-${GITHUB_REF_NAME#release-v}-py3-none-any.whl"
           if [ ! -f "$expected" ]; then
             echo "::error::tag $GITHUB_REF_NAME is not a version in PEP 440's standard form."
-            echo "Use forms like v0.2.0, v0.2.0a1, v0.2.0b1 or v0.2.0rc1. Built instead:"
+            echo "Use forms like release-v0.2.0, release-v0.2.0a1, release-v0.2.0b1 or release-v0.2.0rc1. Built instead:"
             ls -1 dist
             exit 1
           fi
@@ -139,7 +140,7 @@ jobs:
 
   release:
     name: attach to the GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/release-v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -166,7 +167,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz \
               --repo "$GITHUB_REPOSITORY" \
-              --title "coho-management-sdk $GITHUB_REF_NAME" \
+              --title "coho-management-sdk ${GITHUB_REF_NAME#release-v}" \
               --generate-notes \
               --verify-tag $prerelease
           fi
@@ -175,7 +176,7 @@ jobs:
     name: publish to PyPI
     # Skipped unless the repository variable PUBLISH_TO_PYPI is "true".
     # See CONTRIBUTING.md — it needs a trusted publisher and a `pypi` environment.
-    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_TO_PYPI == 'true'
+    if: startsWith(github.ref, 'refs/tags/release-v') && vars.PUBLISH_TO_PYPI == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:

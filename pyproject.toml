@@ -43,15 +43,23 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-# From git tags, through hatch-vcs and setuptools-scm. Tag `v0.2.0` builds 0.2.0;
-# three commits after it builds 0.2.1.dev3. Before the first tag, builds are
-# 0.1.devN. CONTRIBUTING.md has the release steps.
+# From git tags, through hatch-vcs and setuptools-scm. Tag `release-v0.2.0` builds
+# 0.2.0; three commits after it builds 0.2.1.dev3. Before the first tag, builds
+# are 0.1.devN. CONTRIBUTING.md has the release steps.
 source = "vcs"
 
 [tool.hatch.version.raw-options]
 # Drop setuptools-scm's `+g<commit>` suffix: PyPI refuses such local versions, and
 # the dev number already differs from one commit to the next.
 local_scheme = "no-local-version"
+
+# ⛔ Only `release-v*` names a version, because the branches are named `v2026.2.1`
+# too: a tag of that name is ambiguous to git, and `git describe` picked the older
+# `v2026.2.1a2` beside it, which built a wheel the release then refused. The match
+# is what settles it — with the old `v*` tags still in the repository, describe
+# must not be allowed to choose one.
+tag_regex = "^release-v(?P<version>.+)$"
+git_describe_command = "git describe --dirty --tags --long --match release-v*"
 
 [tool.hatch.build.hooks.vcs]
 # Written at build time so `coho_management_sdk.__version__` keeps working. It is

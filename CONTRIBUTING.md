@@ -63,10 +63,10 @@ agrees with the installed metadata.
 
 | You build from | Version |
 |---|---|
-| a commit tagged `v0.2.0` | `0.2.0` |
+| a commit tagged `release-v0.2.0` | `0.2.0` |
 | three commits after it | `0.2.1.dev3`: a dev build, Python's equivalent of a Maven SNAPSHOT |
-| a commit tagged `v0.3.0rc1` | `0.3.0rc1` |
-| a repository with no tags yet | `0.1.devN` |
+| a commit tagged `release-v0.3.0rc1` | `0.3.0rc1` |
+| a repository with no `release-v` tag yet | `0.1.devN` |
 
 Installers skip dev and pre-release versions whenever a final release fits, unless a
 requirement names one, so publishing them never surprises anybody: the CLI asks for
@@ -76,17 +76,24 @@ requirement names one, so publishing them never surprises anybody: the CLI asks 
 To release:
 
 1. Add a `CHANGELOG.md` entry, and merge to `main`.
-2. Tag the commit and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Use
-   `vX.Y.ZaN`, `bN` or `rcN` for alphas, betas and release candidates; GitHub marks
-   those as pre-releases.
+2. Tag the commit and push the tag: `git tag release-v0.2.0 && git push origin
+   refs/tags/release-v0.2.0`. Use `release-vX.Y.ZaN`, `bN` or `rcN` for alphas, betas
+   and release candidates; GitHub marks those as pre-releases.
+
+   ⛔ `release-v`, never a bare `v`. This repository's branches are named `v2026.2.1`,
+   so a `v2026.2.1` tag is a second ref of that name: `git push origin v2026.2.1` is
+   refused as ambiguous, and `git describe` may pick a neighbouring `v…a2` tag instead,
+   which builds a wheel the release then refuses. `git_describe_command` in
+   `pyproject.toml` now matches `release-v*` only, so the old `v*` tags are invisible
+   to the version. Pushing the full ref keeps the tag unambiguous.
 3. CI tests, builds a wheel and an sdist, installs the wheel into a clean environment
    to check it imports, uploads both as a build artifact, attaches them to a GitHub
    Release for the tag, and publishes them to PyPI.
 
 ⚠️ **Never tag a dev version.** Dev versions come from commits after a release. A tag
-like `v0.3.0.dev1` makes every later build fail, since a dev build of a dev build
+like `release-v0.3.0.dev1` makes every later build fail, since a dev build of a dev build
 cannot be numbered, so CI refuses one before building. It also refuses a tag that is
-not in PEP 440's standard form, such as `v0.2.0-rc1`, which would build `0.2.0rc1`
+not in PEP 440's standard form, such as `release-v0.2.0-rc1`, which would build `0.2.0rc1`
 and no longer match its own tag. If one slips through, delete it:
 `git push --delete origin <tag>`.
 
