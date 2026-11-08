@@ -56,9 +56,13 @@ WEBHOOK_EVENTS = [
     "tag.created",
     "tag.ready",
     "tag.build_failed",
+    "tag.deleted",
+    "tag.restored",
     "tag_request.refused",
     "branch.created",
     "branch.merged",
+    "branch.deleted",
+    "branch.restored",
     "entries.changed",
     "assets.changed",
     "model.changed",
@@ -434,6 +438,22 @@ class FakeBff:
 
         s.expect_request(f"{p}/branches", method="POST").respond_with_handler(create_branch)
 
+        def delete_branch(request: Request) -> Response:
+            # An open branch needs confirming, as authoring asks.
+            if request.args.get("confirmDestructive") == "true":
+                return Response(status=204)
+            return problem(400, "BRANCH_NOT_MERGED", "'feature/spring' may not be merged anywhere")
+
+        s.expect_request(f"{p}/branches/feature/spring", method="DELETE").respond_with_handler(
+            delete_branch
+        )
+        s.expect_request(f"{p}/branches/feature/done", method="DELETE").respond_with_data(
+            status=204
+        )
+        s.expect_request(f"{p}/branches/v0.0.x", method="DELETE").respond_with_handler(
+            lambda req: problem(400, "BRANCH_IN_USE", "'v0.0.x' cannot be deleted: it is the trunk")
+        )
+
         def create_tag(request: Request) -> Response:
             self._record(request)
             body = request.get_json()
@@ -461,6 +481,90 @@ class FakeBff:
             )
 
         s.expect_request(f"{p}/tags", method="POST").respond_with_handler(create_tag)
+        s.expect_request(f"{p}/tags/v0.9.0", method="DELETE").respond_with_data(status=204)
+
+        # What has been deleted (coho-data doc 77): one to restore, one whose name has been used
+        # since, one that cannot be restored yet, two sharing a name, and a tag.
+        s.expect_request(f"{p}/deleted-refs", method="GET").respond_with_json(
+            {
+                "refs": [
+                    {
+                        "id": "d1",
+                        "name": "feature/old",
+                        "kind": "feature_branch",
+                        "status": "merged",
+                        "parent": "v0.0.x",
+                        "deletedAt": "2026-11-08T10:00:00Z",
+                    },
+                    {
+                        "id": "d2",
+                        "name": "feature/taken",
+                        "kind": "feature_branch",
+                        "status": "open",
+                        "nameTaken": True,
+                        "deletedAt": "2026-11-07T10:00:00Z",
+                    },
+                    {
+                        "id": "d3",
+                        "name": "feature/child",
+                        "kind": "feature_branch",
+                        "status": "open",
+                        "changedSinceMerge": True,
+                        "blockedBy": "the branch it was cut from, feature/gone, is deleted too",
+                        "deletedAt": "2026-11-06T10:00:00Z",
+                    },
+                    {
+                        "id": "d4",
+                        "name": "feature/twice",
+                        "kind": "feature_branch",
+                        "deletedAt": "2026-11-05T10:00:00Z",
+                    },
+                    {
+                        "id": "d5",
+                        "name": "feature/twice",
+                        "kind": "feature_branch",
+                        "deletedAt": "2026-11-04T10:00:00Z",
+                    },
+                    {
+                        "name": "v0.8.0",
+                        "kind": "tag",
+                        "taggedFrom": "v0.0.x",
+                        "at": 12,
+                        "deletedAt": "2026-11-03T10:00:00Z",
+                    },
+                ]
+            }
+        )
+
+        def restore_branch(request: Request) -> Response:
+            name = (request.get_json(silent=True) or {}).get("name") or "feature/restored"
+            return ok({"name": name, "kind": "feature_branch"})
+
+        for deleted_id in ("d1", "d4", "d5"):
+            s.expect_request(
+                f"{p}/deleted-refs/branches/{deleted_id}/restore", method="POST"
+            ).respond_with_handler(restore_branch)
+
+        def restore_taken(request: Request) -> Response:
+            name = (request.get_json(silent=True) or {}).get("name")
+            if not name:
+                return problem(400, "REF_NAME_TAKEN", "'feature/taken' already exists")
+            return ok({"name": name, "kind": "feature_branch"})
+
+        s.expect_request(
+            f"{p}/deleted-refs/branches/d2/restore", method="POST"
+        ).respond_with_handler(restore_taken)
+        s.expect_request(
+            f"{p}/deleted-refs/branches/d3/restore", method="POST"
+        ).respond_with_handler(
+            lambda req: problem(400, "RESTORE_BLOCKED", "'feature/child' cannot be restored")
+        )
+        s.expect_request(f"{p}/deleted-refs/tags/v0.8.0/restore", method="POST").respond_with_json(
+            {"name": "v0.8.0", "kind": "tag", "snapshot": "building"}
+        )
+        s.expect_request(f"{p}/tags/v1.0.0", method="DELETE").respond_with_handler(
+            lambda req: problem(400, "TAG_IN_USE", "'v1.0.0' cannot be deleted: prod is running it")
+        )
 
         # --- diff & merge ---
         s.expect_request(f"{p}/diff", method="GET").respond_with_json(

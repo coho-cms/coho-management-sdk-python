@@ -282,6 +282,36 @@ class RefNameTaken(CohoError):
     code = "REF_NAME_TAKEN"
 
 
+class BranchInUse(CohoError):
+    """The trunk, or a branch something still depends on: the message names what."""
+
+    code = "BRANCH_IN_USE"
+
+
+class BranchNotMerged(CohoError):
+    """The branch may hold the only copy of some work. Repeat with ``confirm_destructive``."""
+
+    code = "BRANCH_NOT_MERGED"
+
+
+class TagInUse(CohoError):
+    """An environment points at the tag or would roll back to it: the message names which."""
+
+    code = "TAG_IN_USE"
+
+
+class TagStillBuilding(CohoError):
+    """The tag's release is being built. Repeat once it has finished."""
+
+    code = "TAG_STILL_BUILDING"
+
+
+class RestoreBlocked(CohoError):
+    """What the deleted ref depends on is deleted too, or the name will not do: the message says."""
+
+    code = "RESTORE_BLOCKED"
+
+
 class MergeConflict(CohoError):
     """The merge needs human decisions; ``conflicts`` carries them."""
 
@@ -497,6 +527,11 @@ _BY_CODE: dict[str, type[CohoError]] = {
         SlugConflict,
         TypeInUse,
         RefNameTaken,
+        BranchInUse,
+        BranchNotMerged,
+        TagInUse,
+        TagStillBuilding,
+        RestoreBlocked,
         MergeConflict,
         MergeRefsMoved,
         CannotMerge,

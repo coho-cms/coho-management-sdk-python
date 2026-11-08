@@ -530,3 +530,39 @@ def test_a_type_names_its_parent_and_its_traits() -> None:
     assert (article.extends, article.abstract, article.traits) == ("page", True, ["seo", "social"])
     root = ContentType.from_dict({"slug": "page", "version": "p1", "definition": {"fields": []}})
     assert (root.extends, root.abstract, root.traits) == (None, False, [])
+
+
+def test_branch_delete_sends_the_confirmation_only_when_asked(coho: Coho) -> None:
+    project = coho.account("acme").project(PROJECT)
+    project.branches.delete("feature/done")
+    with pytest.raises(e.BranchNotMerged):
+        project.branches.delete("feature/spring")
+    project.branches.delete("feature/spring", confirm_destructive=True)
+    with pytest.raises(e.BranchInUse):
+        project.branches.delete("v0.0.x")
+
+
+def test_tag_delete_and_a_tag_still_in_use(coho: Coho) -> None:
+    project = coho.account("acme").project(PROJECT)
+    project.tags.delete("v0.9.0")
+    with pytest.raises(e.TagInUse):
+        project.tags.delete("v1.0.0")
+
+
+def test_deleted_refs_list_what_each_needs(coho: Coho) -> None:
+    project = coho.account("acme").project(PROJECT)
+    deleted = {r.id or r.name: r for r in project.refs.deleted()}
+    assert deleted["d2"].name_taken
+    assert deleted["d3"].blocked_by and deleted["d3"].changed_since_merge
+    assert deleted["v0.8.0"].tagged_from == "v0.0.x" and deleted["v0.8.0"].id is None
+
+
+def test_restoring_a_branch_and_a_tag(coho: Coho) -> None:
+    project = coho.account("acme").project(PROJECT)
+    assert project.refs.restore_branch("d1").name == "feature/restored"
+    with pytest.raises(e.RefNameTaken):
+        project.refs.restore_branch("d2")
+    assert project.refs.restore_branch("d2", name="feature/again").name == "feature/again"
+    with pytest.raises(e.RestoreBlocked):
+        project.refs.restore_branch("d3")
+    assert project.refs.restore_tag("v0.8.0").name == "v0.8.0"

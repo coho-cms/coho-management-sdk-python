@@ -575,6 +575,12 @@ class RefsApi:
         self._p = project
         self._t = project._t
 
+    # Before `list`, which from there on names this method in an annotation, not the builtin.
+    def deleted(self) -> list[m.DeletedRef]:
+        """Every deleted branch and tag, newest first. Needs ``ref:restore``, an owner's."""
+        body = self._t.get(f"{self._p.path}/deleted-refs").body
+        return [m.DeletedRef.from_dict(r) for r in (body or {}).get("refs", [])]
+
     def list(self, *, kind: str | None = None) -> list[m.RefInfo]:
         body = self._t.get(f"{self._p.path}/refs").body
         refs = [m.RefInfo.from_dict(r) for r in (body or {}).get("refs", [])]
@@ -587,6 +593,25 @@ class RefsApi:
         """Set (or clear, with ``None``/blank) a ref's standing description."""
         body = {"description": description or ""}
         return m.RefInfo.from_dict(self._t.patch(f"{self._p.path}/refs/{segment(name)}", body).body)
+
+    def restore_branch(self, branch_id: str, *, name: str | None = None) -> m.RefInfo:
+        """Bring back a deleted branch, by the id `deleted` gives, since two can share a name.
+
+        ``name`` only if its own has been used since (`RefNameTaken` otherwise). `RestoreBlocked`
+        while the branch it was cut from is deleted too.
+        """
+        body: JSON = {"name": name} if name else {}
+        return m.RefInfo.from_dict(
+            self._t.post(
+                f"{self._p.path}/deleted-refs/branches/{segment(branch_id)}/restore", body
+            ).body
+        )
+
+    def restore_tag(self, name: str) -> m.RefInfo:
+        """Bring back a deleted tag under its own name. Promotable once it has rebuilt."""
+        return m.RefInfo.from_dict(
+            self._t.post(f"{self._p.path}/deleted-refs/tags/{segment(name)}/restore").body
+        )
 
 
 class BranchesApi:
@@ -615,6 +640,19 @@ class BranchesApi:
             body["at"] = at
         return m.Branch.from_dict(self._t.post(f"{self._p.path}/branches", body).body)
 
+    def delete(self, name: str, *, confirm_destructive: bool = False) -> None:
+        """Delete a branch. Its name is free again at once, and an owner can restore it.
+
+        Needs ``branch:create``, or ``branch:create_version`` for a version branch. Refused with
+        `BranchInUse` for the trunk, and for a branch with branches cut from it, tags on it, or an
+        environment pointing at it. A branch whose status is ``open`` may hold the only copy of
+        some work, so it is refused with `BranchNotMerged` unless ``confirm_destructive``.
+        """
+        self._t.delete(
+            f"{self._p.path}/branches/{segment(name)}",
+            params={"confirmDestructive": confirm_destructive or None},
+        )
+
 
 class TagsApi:
     def __init__(self, project: Project) -> None:
@@ -624,6 +662,14 @@ class TagsApi:
     def list(self) -> list[m.RefInfo]:
         """Tags are refs of kind ``tag``; there is no separate listing."""
         return self._p.refs.list(kind="tag")
+
+    def delete(self, name: str) -> None:
+        """Delete a tag. An owner can restore it, and the name is never free for anything else.
+
+        Needs ``release:delete``. Refused with `TagInUse` while an environment points at it or
+        would roll back to it, and with `TagStillBuilding` while its release is being built.
+        """
+        self._t.delete(f"{self._p.path}/tags/{segment(name)}")
 
     def create(
         self,

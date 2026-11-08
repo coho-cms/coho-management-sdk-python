@@ -337,6 +337,49 @@ class RefInfo:
 
 
 @dataclass(slots=True)
+class DeletedRef:
+    """A deleted branch or tag, which an owner can bring back."""
+
+    name: str
+    kind: str
+    """``version_branch``, ``feature_branch`` or ``tag``."""
+    deleted_at: str | None = None
+    deleted_by: str | None = None
+    id: str | None = None
+    """A branch's id, which restoring it takes. ``None`` for a tag, restored by name."""
+    description: str | None = None
+    status: str | None = None
+    changed_since_merge: bool = False
+    parent: str | None = None
+    tagged_from: str | None = None
+    at: int | None = None
+    name_taken: bool = False
+    """Its name has been used since, so restoring it needs another."""
+    blocked_by: str | None = None
+    """Why it cannot be restored yet."""
+    raw: JSON = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, raw: JSON) -> DeletedRef:
+        return cls(
+            name=str(raw.get("name", "")),
+            kind=str(raw.get("kind", "")),
+            deleted_at=raw.get("deletedAt"),
+            deleted_by=raw.get("deletedBy"),
+            id=raw.get("id"),
+            description=raw.get("description"),
+            status=raw.get("status"),
+            changed_since_merge=bool(raw.get("changedSinceMerge", False)),
+            parent=raw.get("parent"),
+            tagged_from=raw.get("taggedFrom"),
+            at=raw.get("at"),
+            name_taken=bool(raw.get("nameTaken", False)),
+            blocked_by=raw.get("blockedBy"),
+            raw=raw,
+        )
+
+
+@dataclass(slots=True)
 class Branch:
     name: str
     kind: str
@@ -346,6 +389,7 @@ class Branch:
     branched_at: int | None = None
     depth_warning: bool = False
     pending_forward_port: int | None = None
+    changed_since_merge: bool = False
     raw: JSON = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -359,6 +403,7 @@ class Branch:
             branched_at=raw.get("branchedAt"),
             depth_warning=bool(raw.get("depthWarning", False)),
             pending_forward_port=raw.get("pendingForwardPort"),
+            changed_since_merge=bool(raw.get("changedSinceMerge", False)),
             raw=raw,
         )
 

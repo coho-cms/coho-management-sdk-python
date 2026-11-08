@@ -8,6 +8,13 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ### Added
 
+- `branches.delete` and `tags.delete` (coho-data doc 76), with `BranchInUse`,
+  `BranchNotMerged`, `TagInUse`, and `TagStillBuilding`. A deleted branch's name is free again;
+  a deleted tag's never is. `Branch.changed_since_merge` tells a branch merged and then written
+  to from one never merged, which `status` alone cannot.
+- `refs.deleted`, `refs.restore_branch`, and `refs.restore_tag` (coho-data doc 77), with
+  `DeletedRef` and `RestoreBlocked`. Deleted branches and tags can be brought back by an owner.
+
 - `Coho.describe_token()`: the project token in use describing itself (`GET /api/v1/token`,
   coho-data doc 29 PT-12), as a `TokenDescription` with its account, project, label, role,
   and expiry. A person is refused with `Unauthenticated`. `FakeBff` answers it for
