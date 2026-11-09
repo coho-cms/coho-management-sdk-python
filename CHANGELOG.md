@@ -83,6 +83,12 @@ All notable changes to `coho-management-sdk`. The format follows
   drawing an unstyled page itself, so the last page matches the rest. The code stays with
   the listener. Needs a sign-in service that serves those pages.
 
+### Fixed
+
+- Depend on `httpx<1`. Nothing kept out httpx 1.0's pre-releases, whose `Client` takes no
+  `timeout`, so an install that allowed pre-releases, as `uv` asks for with an alpha of
+  `coho-cli`, failed with a `TypeError` on every call.
+
 ### Added
 
 - Usage reports (coho-data doc 41): `Project.usage()` for anyone who can read the
