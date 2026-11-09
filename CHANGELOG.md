@@ -6,6 +6,11 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+## [2026.2.3] — 2026-11-09
+
+The first dated section since 0.1.0, so everything below includes what shipped across the
+2026.1.0 alphas and 2026.2.1.
+
 ### Added
 
 - `branches.delete` and `tags.delete` (coho-data doc 76), with `BranchInUse`,
@@ -190,5 +195,6 @@ read-only client that a customer's website installs with a project key.
   Owner-only permissions are applied where the platform has them and skipped where it
   does not.
 
-[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/release-v2026.2.3...HEAD
+[2026.2.3]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.3
 [0.1.0]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/v0.1.0
