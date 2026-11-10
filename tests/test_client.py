@@ -204,6 +204,32 @@ def test_put_force_reads_then_writes(coho: Coho, bff: FakeBff) -> None:
     assert methods == ["GET", "PUT"]
 
 
+def test_put_with_a_slug_renames_in_the_same_version(coho: Coho, bff: FakeBff) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev")
+    post = dev.entries.get(ENTRY)
+    renamed = dev.entries.put(post, slug="hello-again")
+    assert bff.last().get_json() == {"fields": post.fields, "slug": "hello-again"}
+    assert (renamed.slug, renamed.etag) == ("hello-again", '"v2"')
+    # Without one, nothing about identity is sent: what was read renames nothing.
+    dev.entries.put(renamed)
+    assert "slug" not in bff.last().get_json()
+
+
+def test_a_rename_onto_a_held_slug_is_a_slug_conflict(coho: Coho) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev")
+    with pytest.raises(e.SlugConflict):
+        dev.entries.put(dev.entries.get(ENTRY), slug="taken")
+
+
+def test_environment_delete_sends_its_reason_only_when_given(coho: Coho, bff: FakeBff) -> None:
+    envs = coho.account("acme").project(PROJECT).environments
+    envs.delete("qa")
+    assert bff.last().method == "DELETE" and not bff.last().data
+    envs.delete("staging", reason="folded into qa")
+    assert bff.last().get_json() == {"reason": "folded into qa"}
+    assert bff.deleted_environments == [("qa", None), ("staging", "folded into qa")]
+
+
 def test_delete_returns_tombstone_etag(coho: Coho) -> None:
     dev = coho.account("acme").project(PROJECT).ref("dev")
     post = dev.entries.get(ENTRY)

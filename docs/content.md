@@ -62,7 +62,13 @@ Other forms:
 dev.entries.put(entry_id, fields, if_match=etag)     # you hold the ETag
 dev.entries.put(entry_id, fields, force=True)        # read the current ETag, then write
 dev.entries.put(entry_id, fields)                    # PreconditionRequired, raised locally
+dev.entries.put(post, slug="hello-again")            # renames it, in the same version as the save
 ```
+
+A `_slug` inside `fields` is ignored, so sending back what was read renames nothing; only
+`slug=` does. A slug another entry on the ref holds is `SlugConflict`, and a singleton's entry
+keeps its fixed slug. Links are by id and keep working; anything that fetches it by slug
+needs the new one.
 
 Handle a race:
 

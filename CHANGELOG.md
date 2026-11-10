@@ -6,6 +6,30 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+## [2026.2.4] — 2026-11-10
+
+### Added
+
+- Webhooks that start a GitHub Actions workflow (coho-data doc 70 WH-17):
+  `webhooks.create(repository="owner/name", token=…, events=…)` makes a `github_dispatch`
+  webhook, which calls GitHub's `repository_dispatch` API with each event as its
+  `client_payload`. `kind=` can be given explicitly. `webhooks.update` takes `repository` and
+  `token`, which is how such a webhook's credential is rotated. `Webhook.kind` and
+  `Webhook.repository` say which a webhook is; `models.WEBHOOK_KINDS` lists the kinds.
+  `FakeBff` keeps them, with the server's refusals.
+- `entries.put(…, slug=…)` renames an entry in the same version as the save, with
+  `SlugConflict` when another entry on the ref holds the slug. `FakeBff` keeps the new slug.
+- `environments.delete(name, reason=…)`: the reason is recorded in the environment's
+  history after the word `deleted`. `FakeBff` answers environment deletes, and keeps them in
+  `bff.deleted_environments`.
+
+### Changed
+
+- `CreatedWebhook.secret` is `str | None`: `None` for a `github_dispatch` webhook, which
+  signs nothing. It was `""` whenever the server sent none.
+- `webhooks.create`'s `url` is optional, since a `github_dispatch` webhook has none. It is
+  still keyword-only, so existing calls are unchanged.
+
 ## [2026.2.3] — 2026-11-09
 
 The first dated section since 0.1.0, so everything below includes what shipped across the
@@ -195,6 +219,7 @@ read-only client that a customer's website installs with a project key.
   Owner-only permissions are applied where the platform has them and skipped where it
   does not.
 
-[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/release-v2026.2.3...HEAD
+[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/release-v2026.2.4...HEAD
+[2026.2.4]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.4
 [2026.2.3]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.3
 [0.1.0]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/v0.1.0

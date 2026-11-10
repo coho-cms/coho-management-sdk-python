@@ -101,7 +101,7 @@ site.environments.promote("prod", "v1.4.0", expected_target="v1.3.0", reason="Go
 site.environments.promote("qa", "v1.4.0", wait=False)              # raises SnapshotNotReady instead
 site.environments.promote("qa", "v1.4.0", timeout=600, poll=5, on_wait=lambda exc, left: print(exc.context.get("state"), left))
 site.environments.unset("qa")
-site.environments.delete("qa2")
+site.environments.delete("qa2", reason="Folded into qa")           # the reason is kept in its history
 ```
 
 `expected_target` → `EnvironmentMoved` if the environment moved. Ordering is

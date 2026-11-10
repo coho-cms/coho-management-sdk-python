@@ -1190,6 +1190,11 @@ class WebhookHealth:
         )
 
 
+WEBHOOK_KINDS = ("standard", "github_dispatch")
+"""What a webhook can be: a URL Coho signs its requests to, or a GitHub repository whose
+Actions workflows it starts through ``repository_dispatch`` (coho-data doc 70 WH-17)."""
+
+
 @dataclass(slots=True)
 class Webhook:
     """An endpoint Coho calls when something happens in the project (coho-data doc 70).
@@ -1199,6 +1204,10 @@ class Webhook:
     is its credential; `WebhooksApi.list` gives ``host`` alone. ``refs`` is ``None`` for
     every ref. ``enabled`` is false when an owner turned it off or when it failed for five
     days, and then ``disabled_reason`` says why.
+
+    ``kind`` is ``standard``, or ``github_dispatch`` for one that starts a GitHub Actions
+    workflow through ``repository_dispatch``: then ``repository`` is its ``owner/name``, its
+    token is one of the write-only ``headers``, and it signs nothing.
     """
 
     id: str
@@ -1218,6 +1227,9 @@ class Webhook:
     previous_secret_until: str | None
     """While a rotation overlaps, when the previous secret stops signing."""
     health: WebhookHealth | None
+    kind: str = "standard"
+    repository: str | None = None
+    """``owner/name``, for a ``github_dispatch`` webhook."""
     raw: JSON = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -1241,6 +1253,8 @@ class Webhook:
             updated_at=raw.get("updatedAt"),
             previous_secret_until=raw.get("previousSecretUntil"),
             health=WebhookHealth.from_dict(health) if isinstance(health, dict) else None,
+            kind=str(raw.get("kind") or "standard"),
+            repository=raw.get("repository"),
             raw=raw,
         )
 
@@ -1265,16 +1279,18 @@ class WebhookList:
 @dataclass(slots=True)
 class CreatedWebhook:
     """⚠️ ``secret`` (``whsec_…``) is in this response and in no other, ever. It is stored
-    sealed, and the server never reads it back."""
+    sealed, and the server never reads it back. ``None`` for a ``github_dispatch`` webhook,
+    which GitHub authenticates by its token and which signs nothing."""
 
-    secret: str
+    secret: str | None
     webhook: Webhook
     raw: JSON = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_dict(cls, raw: JSON) -> CreatedWebhook:
+        secret = raw.get("secret")
         return cls(
-            secret=str(raw.get("secret", "")),
+            secret=str(secret) if secret else None,
             webhook=Webhook.from_dict(raw.get("webhook") or {}),
             raw=raw,
         )

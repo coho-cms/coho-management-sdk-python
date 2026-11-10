@@ -43,6 +43,32 @@ site.webhooks.update(w.id, enabled=False)
 site.webhooks.delete(w.id)                # with its deliveries and their log
 ```
 
+## GitHub Actions
+
+A webhook can start a GitHub Actions workflow directly, through GitHub's
+`repository_dispatch` API, with no relay in between. Give it a `repository` and a `token` in
+place of `url` and `headers`; the kind follows from the repository, and is fixed once made.
+
+```python
+created = site.webhooks.create(
+    repository="acme/site",                           # owner/name
+    token="github_pat_…",                             # can write to the repository's contents
+    events=["environment.promoted"],                  # a rollback is a promotion too
+    refs=["prod"],
+)
+created.secret                            # None: GitHub checks the token, and nothing is signed
+w = created.webhook
+w.kind, w.repository                      # "github_dispatch", "acme/site"; w.host is api.github.com
+
+site.webhooks.update(w.id, token="github_pat_…")   # how its credential is rotated
+```
+
+Each event arrives as a `repository_dispatch` whose `event_type` is the event's type and
+whose `client_payload` is the whole event, so a workflow picks events with
+`on.repository_dispatch.types` and reads `github.event.client_payload.data`. `rotate_secret`
+refuses one, with `WebhookInvalid`, since it has no secret; so does giving it a `url` or
+`headers`, or giving a standard webhook a `repository` or `token`.
+
 ## Secrets
 
 ```python

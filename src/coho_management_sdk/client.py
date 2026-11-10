@@ -761,8 +761,13 @@ class EnvironmentsApi:
     ) -> m.Environment:
         return self.promote(name, None, reason=reason, expected_target=expected_target, wait=False)
 
-    def delete(self, name: str) -> None:
-        self._t.delete(f"{self._p.path}/environments/{segment(name)}")
+    def delete(self, name: str, *, reason: str | None = None) -> None:
+        """Removes the environment. The removal stays in its history, with ``reason`` after
+        the word ``deleted``."""
+        self._t.delete(
+            f"{self._p.path}/environments/{segment(name)}",
+            json_body={"reason": reason} if reason is not None else None,
+        )
 
     def history(
         self, name: str, *, limit: int | None = None, offset: int | None = None
@@ -912,12 +917,15 @@ class WebhooksApi:
     def create(
         self,
         *,
-        url: str,
         events: builtins.list[str],
+        url: str | None = None,
         refs: builtins.list[str] | None = None,
         headers: dict[str, str] | None = None,
         description: str | None = None,
         enabled: bool = True,
+        kind: str | None = None,
+        repository: str | None = None,
+        token: str | None = None,
     ) -> m.CreatedWebhook:
         """⚠️ The signing secret is in the result and nowhere else, ever.
 
@@ -925,8 +933,22 @@ class WebhooksApi:
         ``tag.*``, or ``*``; ``refs`` are ref patterns with ``*`` and ``?``, and ``None``
         sends every ref's events. ``headers`` are sent with every request; their values
         are never read back.
+
+        ``kind="github_dispatch"`` starts a GitHub Actions workflow instead: give
+        ``repository`` (``owner/name``) and ``token`` (one that can write to its contents)
+        in place of ``url`` and ``headers``. Each event is a ``repository_dispatch`` whose
+        ``event_type`` is the event's type and whose ``client_payload`` is the event. It
+        signs nothing, so the result's ``secret`` is ``None``. Giving a ``repository``
+        implies the kind. A webhook's kind is fixed once made.
         """
-        body: JSON = {"url": url, "events": events, "enabled": enabled}
+        if kind is None and repository is not None:
+            kind = "github_dispatch"
+        body: JSON = {"events": events, "enabled": enabled}
+        if kind is not None:
+            body["kind"] = kind
+        for key, value in (("url", url), ("repository", repository), ("token", token)):
+            if value is not None:
+                body[key] = value
         if refs is not None:
             body["refs"] = refs
         if headers is not None:
@@ -945,6 +967,8 @@ class WebhooksApi:
         headers: dict[str, str] | None = None,
         description: str | None = None,
         enabled: bool | None = None,
+        repository: str | None = None,
+        token: str | None = None,
     ) -> m.Webhook:
         """Changes what is given and leaves the rest.
 
@@ -952,6 +976,10 @@ class WebhooksApi:
         their values cannot be read back to merge with, and ``headers={}`` clears them.
         ``description=""`` clears the description. ``enabled=True`` also clears the run of
         failures that disabled it.
+
+        ``repository`` and ``token`` are for a ``github_dispatch`` webhook, in place of
+        ``url`` and ``headers``; ``token`` replaces the one it has, which is how such a
+        webhook's credential is rotated, since it has no secret.
         """
         body: JSON = {}
         for key, value in (
@@ -961,6 +989,8 @@ class WebhooksApi:
             ("headers", headers),
             ("description", description),
             ("enabled", enabled),
+            ("repository", repository),
+            ("token", token),
         ):
             if value is not None:
                 body[key] = value
@@ -972,7 +1002,9 @@ class WebhooksApi:
 
     def rotate_secret(self, webhook_id: str) -> m.WebhookSecret:
         """⚠️ A new signing secret, shown once. The previous one signs beside it for 24
-        hours; rotating again within the day erases the oldest at once."""
+        hours; rotating again within the day erases the oldest at once. A
+        ``github_dispatch`` webhook has no secret, and is refused with `WebhookInvalid`:
+        replace its token with ``update(token=…)`` instead."""
         return m.WebhookSecret.from_dict(
             self._t.post(f"{self._path(webhook_id)}/rotate-secret").body
         )
@@ -1330,6 +1362,7 @@ class EntriesApi:
         *,
         if_match: str | None = None,
         force: bool = False,
+        slug: str | None = None,
     ) -> m.Entry:
         """Update an entry's fields.
 
@@ -1337,6 +1370,11 @@ class EntriesApi:
         with ``fields`` and ``if_match``. ``force=True`` reads the current ETag first and
         overwrites. Without any of those this raises `PreconditionRequired` locally
         rather than sending a request the server will refuse with ``428``.
+
+        ``slug`` renames the entry in the same version as the save; a ``_slug`` in
+        ``fields`` is ignored. Another entry on the ref holding it is `SlugConflict`, and a
+        singleton's entry keeps its fixed slug. Links are by id and keep working; lookups
+        by slug need the new one.
         """
         if isinstance(entry, m.Entry):
             entry_id = entry.id
@@ -1356,9 +1394,10 @@ class EntriesApi:
                     status=428,
                 )
             etag = self.get(entry_id).etag
-        resp = self._t.put(
-            f"{self._r.path}/entries/{segment(entry_id)}", {"fields": fields}, if_match=etag
-        )
+        body: JSON = {"fields": fields}
+        if slug is not None:
+            body["slug"] = slug
+        resp = self._t.put(f"{self._r.path}/entries/{segment(entry_id)}", body, if_match=etag)
         return m.Entry.from_dict(resp.body, etag=resp.etag)
 
     def delete(

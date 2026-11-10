@@ -38,7 +38,7 @@ def test_create_answers_the_secret_once_and_list_leaves_the_url_out(
         "headers": {"Authorization": "Bearer xyz"},
         "description": "Rebuild the site",
     }
-    assert created.secret.startswith("whsec_")
+    assert created.secret is not None and created.secret.startswith("whsec_")
     w = created.webhook
     assert (w.host, w.url, w.refs, w.headers) == (
         "build.example.com",
@@ -196,3 +196,51 @@ def test_delete_takes_the_log_with_it(project: Project, bff: FakeBff) -> None:
     assert bff.last().method == "DELETE" and w.id not in bff.webhook_deliveries
     with pytest.raises(e.NotFound):
         project.webhooks.get(w.id)
+
+
+def test_a_github_dispatch_webhook_takes_a_repository_and_token_and_has_no_secret(
+    project: Project, bff: FakeBff
+) -> None:
+    created = project.webhooks.create(
+        repository="acme/site", token="ghp_example", events=["environment.promoted"]
+    )
+    assert bff.last().get_json() == {
+        "events": ["environment.promoted"],
+        "enabled": True,
+        "kind": "github_dispatch",
+        "repository": "acme/site",
+        "token": "ghp_example",
+    }
+    assert created.secret is None and "secret" not in created.raw
+    w = created.webhook
+    assert (w.kind, w.repository, w.host, w.headers) == (
+        "github_dispatch",
+        "acme/site",
+        "api.github.com",
+        ["Authorization"],
+    )
+    assert w.url == "https://api.github.com/repos/acme/site/dispatches"
+
+    changed = project.webhooks.update(w.id, repository="acme/docs", token="ghp_new")
+    assert bff.last().get_json() == {"repository": "acme/docs", "token": "ghp_new"}
+    assert changed.repository == "acme/docs"
+    assert bff.webhook_headers[w.id] == {"Authorization": "Bearer ghp_new"}
+
+    with pytest.raises(e.WebhookInvalid, match="no secret to rotate"):
+        project.webhooks.rotate_secret(w.id)
+    with pytest.raises(e.WebhookInvalid, match="takes a repository and a token"):
+        project.webhooks.update(w.id, url="https://hooks.example.com/")
+
+
+def test_a_standard_webhook_is_standard_and_refuses_a_repository(project: Project) -> None:
+    w = project.webhooks.create(url="https://hooks.example.com/", events=["*"]).webhook
+    assert (w.kind, w.repository) == ("standard", None)
+    with pytest.raises(e.WebhookInvalid, match="kind 'github_dispatch'"):
+        project.webhooks.update(w.id, token="ghp_example")
+
+
+def test_a_github_dispatch_webhook_needs_its_token(project: Project) -> None:
+    with pytest.raises(e.WebhookInvalid, match="GitHub token"):
+        project.webhooks.create(repository="acme/site", events=["*"])
+    with pytest.raises(e.WebhookInvalid, match="owner/name"):
+        project.webhooks.create(repository="not a repo", token="ghp_example", events=["*"])

@@ -223,6 +223,27 @@ def _check_webhook(body: dict[str, Any], *, change: bool) -> Response | None:
     return None
 
 
+_GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+_GITHUB_ONLY = "A repository and a token are for a webhook of kind 'github_dispatch'"
+_GITHUB_TAKES = (
+    "A GitHub webhook takes a repository and a token, and Coho works out its URL and headers "
+    "from them"
+)
+
+
+def _check_github(body: dict[str, Any], *, github: bool) -> Response | None:
+    """The server's refusals of a ``github_dispatch`` webhook's fields, and of those fields
+    on a standard one (coho-data doc 70 WH-17)."""
+    if github and ("url" in body or "headers" in body):
+        return problem(400, "WEBHOOK_INVALID", _GITHUB_TAKES)
+    if not github and ("repository" in body or "token" in body):
+        return problem(400, "WEBHOOK_INVALID", _GITHUB_ONLY)
+    repository = body.get("repository")
+    if repository is not None and not _GITHUB_REPOSITORY.match(str(repository)):
+        return problem(400, "WEBHOOK_INVALID", "The repository is owner/name, as GitHub writes it")
+    return None
+
+
 def _unreachable(host: str) -> bool:
     if host == "localhost":
         return True
@@ -249,6 +270,10 @@ class FakeBff:
         # item of the problem's `invalidEntries`. Empty means the content is valid.
         self.invalid_entries: list[dict[str, Any]] = []
         self.entry_version = "v1"
+        # The entry's slug, which a PUT with `slug` renames (coho-data commit 2327174).
+        self.entry_slug = "hello"
+        # Each DELETE of an environment, with the reason it gave: (name, reason).
+        self.deleted_environments: list[tuple[str, str | None]] = []
         self.entry_fields: dict[str, Any] = {"title": {"en-US": "Hello"}, "rank": 1}
         # Assets (doc 40). `blobs` is what the fake object store holds, by sha256;
         # `uploads` what was begun; `assets` what was completed, by id.
@@ -663,6 +688,17 @@ class FakeBff:
             )
 
         s.expect_request(f"{p}/environments/prod", method="PUT").respond_with_handler(promote)
+
+        def delete_environment(request: Request) -> Response:
+            self._record(request)
+            body = request.get_json(silent=True) if request.data else None
+            reason = body.get("reason") if isinstance(body, dict) else None
+            self.deleted_environments.append((request.path.rsplit("/", 1)[-1], reason))
+            return Response(status=204)
+
+        s.expect_request(
+            re.compile(rf"^{re.escape(p)}/environments/[^/]+$"), method="DELETE"
+        ).respond_with_handler(delete_environment)
         s.expect_request(f"{p}/environments/prod/history", method="GET").respond_with_json(
             {
                 "ref": "prod",
@@ -1014,7 +1050,7 @@ class FakeBff:
                 {
                     "id": ENTRY,
                     "type": "blogPost",
-                    "slug": "hello",
+                    "slug": self.entry_slug,
                     "version": self.entry_version,
                     "fields": self.entry_fields,
                 },
@@ -1034,13 +1070,19 @@ class FakeBff:
                     expectedVersion=etag.strip('"'),
                     currentVersion=self.entry_version,
                 )
-            self.entry_fields = request.get_json()["fields"]
+            body = request.get_json()
+            slug = body.get("slug")
+            if slug is not None and slug != self.entry_slug:
+                if slug == "taken":
+                    return problem(400, "SLUG_CONFLICT", "slug in use", slug="taken", ref="dev")
+                self.entry_slug = slug
+            self.entry_fields = body["fields"]
             self.entry_version = "v" + str(int(self.entry_version[1:]) + 1)
             return ok(
                 {
                     "id": ENTRY,
                     "type": "blogPost",
-                    "slug": "hello",
+                    "slug": self.entry_slug,
                     "version": self.entry_version,
                     "fields": self.entry_fields,
                 },
@@ -1350,6 +1392,13 @@ class FakeBff:
             if verb == "rotate-secret":
                 if not self.webhooks_configured:
                     return unconfigured()
+                if self.webhooks[webhook_id]["kind"] == "github_dispatch":
+                    return problem(
+                        400,
+                        "WEBHOOK_INVALID",
+                        "A GitHub webhook signs nothing, so it has no secret to rotate. "
+                        "Replace its token instead",
+                    )
                 self.webhook_secrets[webhook_id] = _new_secret()
                 until = "2026-11-03T14:00:00Z"
                 self.webhooks[webhook_id]["previousSecretUntil"] = until
@@ -1414,13 +1463,30 @@ class FakeBff:
             if not self.webhooks_configured:
                 return unconfigured()
             body = request.get_json()
-            if not body.get("url"):
+            kind = body.get("kind") or "standard"
+            if kind not in ("standard", "github_dispatch"):
+                return problem(400, "WEBHOOK_INVALID", "kind is 'standard' or 'github_dispatch'")
+            github = kind == "github_dispatch"
+            refused = _check_github(body, github=github)
+            if refused is not None:
+                return refused
+            if github and not body.get("repository"):
+                return problem(
+                    400, "WEBHOOK_INVALID", "Give the repository to dispatch to, as owner/name"
+                )
+            if not github and not body.get("url"):
                 return problem(400, "WEBHOOK_INVALID", "Give the URL to send to")
             if body.get("events") is None:
                 return problem(
                     400,
                     "WEBHOOK_INVALID",
                     "Name the events to send: a type, a group such as 'tag.*', or '*'",
+                )
+            if github and not body.get("token"):
+                return problem(
+                    400,
+                    "WEBHOOK_INVALID",
+                    "Give a GitHub token that can write to the repository's contents",
                 )
             refused = _check_webhook(body, change=False)
             if refused is not None:
@@ -1434,9 +1500,15 @@ class FakeBff:
                 )
             webhook_id = str(uuid.uuid4())
             headers = body.get("headers") or {}
+            url = body.get("url")
+            if github:
+                url = f"https://api.github.com/repos/{body['repository']}/dispatches"
+                headers = {"Authorization": f"Bearer {body['token']}"}
             self.webhooks[webhook_id] = {
                 "id": webhook_id,
-                "url": body["url"],
+                "kind": kind,
+                "repository": body.get("repository"),
+                "url": url,
                 "description": (body.get("description") or "").strip() or None,
                 "events": list(body["events"]),
                 "refs": body.get("refs"),
@@ -1446,23 +1518,28 @@ class FakeBff:
                 "createdAt": "2026-11-02T14:00:00Z",
             }
             self.webhook_headers[webhook_id] = dict(headers)
-            self.webhook_secrets[webhook_id] = _new_secret()
             self.webhook_deliveries[webhook_id] = []
-            return ok(
-                {
-                    "secret": self.webhook_secrets[webhook_id],
-                    "webhook": self._webhook_doc(webhook_id, full=True),
-                },
-                201,
-            )
+            created: dict[str, Any] = {"webhook": self._webhook_doc(webhook_id, full=True)}
+            if not github:
+                self.webhook_secrets[webhook_id] = _new_secret()
+                created["secret"] = self.webhook_secrets[webhook_id]
+            return ok(created, 201)
 
         def update(webhook_id: str, body: dict[str, Any]) -> Response:
             if not self.webhooks_configured and "url" in body:
                 return unconfigured()
-            refused = _check_webhook(body, change=True)
+            w = self.webhooks[webhook_id]
+            github = w["kind"] == "github_dispatch"
+            if "kind" in body and body["kind"] != w["kind"]:
+                return problem(400, "WEBHOOK_INVALID", "A webhook's kind is fixed. Make a new one")
+            refused = _check_github(body, github=github) or _check_webhook(body, change=True)
             if refused is not None:
                 return refused
-            w = self.webhooks[webhook_id]
+            if "repository" in body:
+                w["repository"] = body["repository"]
+                w["url"] = f"https://api.github.com/repos/{body['repository']}/dispatches"
+            if "token" in body:
+                self.webhook_headers[webhook_id] = {"Authorization": f"Bearer {body['token']}"}
             for key in ("url", "events"):
                 if key in body:
                     w[key] = body[key]
