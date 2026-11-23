@@ -178,42 +178,91 @@ class FileTokenStore(TokenStore):
             self._write(data)
 
 
+# Windows' Credential Manager holds at most 2560 bytes a credential, and keyring writes it in
+# UTF-16, so 1280 characters. Cognito's three tokens are several times that, and one blob that
+# size fails in CredWrite with error 1783, "The stub received bad data". So the JSON goes in
+# pieces: `<profile>` holds an index, `{"chunks": n}`, and `<profile>#1` to `#n` the text in
+# order. Every platform stores it the same way, and an entry an older SDK wrote whole still
+# loads.
+KEYRING_CHUNK = 1000
+
+
 class KeyringTokenStore(TokenStore):
-    """The OS keyring, via the optional ``keyring`` package. One JSON blob per profile."""
+    """The OS keyring, via the optional ``keyring`` package: a profile's tokens as JSON, in
+    pieces under ``KEYRING_CHUNK`` characters each."""
 
     def __init__(self, service: str = KEYRING_SERVICE) -> None:
         try:
             import keyring  # noqa: PLC0415
-            from keyring.errors import KeyringError  # noqa: PLC0415
         except ImportError as exc:  # pragma: no cover - depends on the install
             raise AuthError(
                 "the 'keyring' package is not installed; use token_store = \"file\""
             ) from exc
         self._keyring = keyring
-        self._error = KeyringError
         self.service = service
 
-    def load(self, profile: str) -> TokenSet | None:
+    # A backend's own errors are not all KeyringError: on Windows, CredWrite raises
+    # win32ctypes' error. Any failure of the store is an AuthError, so a caller can fall back.
+
+    def _get(self, key: str) -> str | None:
         try:
-            raw = self._keyring.get_password(self.service, profile)
-        except self._error as exc:
+            value: str | None = self._keyring.get_password(self.service, key)
+        except Exception as exc:  # noqa: BLE001 - see above
             raise AuthError(f"keyring read failed: {exc}") from exc
+        return value
+
+    def _set(self, key: str, value: str) -> None:
+        try:
+            self._keyring.set_password(self.service, key, value)
+        except Exception as exc:  # noqa: BLE001 - see above
+            raise AuthError(f"keyring write failed: {exc}") from exc
+
+    def _forget(self, key: str) -> None:
+        with contextlib.suppress(Exception):
+            self._keyring.delete_password(self.service, key)
+
+    @staticmethod
+    def _chunks(raw: str | None) -> int:
+        """How many pieces an index names, or 0 for anything that is not an index."""
+        try:
+            data = json.loads(raw) if raw else None
+        except ValueError:
+            return 0
+        if isinstance(data, dict) and set(data) == {"chunks"} and isinstance(data["chunks"], int):
+            return max(data["chunks"], 0)
+        return 0
+
+    def load(self, profile: str) -> TokenSet | None:
+        raw = self._get(profile)
         if not raw:
             return None
+        count = self._chunks(raw)
+        if count:
+            pieces = [self._get(f"{profile}#{i}") for i in range(1, count + 1)]
+            if any(piece is None for piece in pieces):
+                return None
+            raw = "".join(piece or "" for piece in pieces)
         try:
             return TokenSet.from_dict(json.loads(raw))
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, TypeError):
             return None
 
     def save(self, profile: str, tokens: TokenSet) -> None:
-        try:
-            self._keyring.set_password(self.service, profile, json.dumps(tokens.to_dict()))
-        except self._error as exc:
-            raise AuthError(f"keyring write failed: {exc}") from exc
+        text = json.dumps(tokens.to_dict())
+        pieces = [text[i : i + KEYRING_CHUNK] for i in range(0, len(text), KEYRING_CHUNK)]
+        before = self._chunks(self._get(profile))
+        for i, piece in enumerate(pieces, start=1):
+            self._set(f"{profile}#{i}", piece)
+        # The index last, so it never names a piece that is not written yet.
+        self._set(profile, json.dumps({"chunks": len(pieces)}))
+        for i in range(len(pieces) + 1, before + 1):
+            self._forget(f"{profile}#{i}")
 
     def delete(self, profile: str) -> None:
-        with contextlib.suppress(self._error):
-            self._keyring.delete_password(self.service, profile)
+        with contextlib.suppress(AuthError):
+            for i in range(1, self._chunks(self._get(profile)) + 1):
+                self._forget(f"{profile}#{i}")
+        self._forget(profile)
 
 
 def token_store_for(profile: Profile) -> TokenStore:

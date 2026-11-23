@@ -6,6 +6,16 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Signing in on Windows. Credential Manager holds at most 2560 bytes a credential, which
+  keyring writes as UTF-16, so 1280 characters, and a profile's tokens are several times
+  that: `CredWrite` failed with error 1783, "The stub received bad data", and the error,
+  not a `KeyringError`, escaped as a traceback. `KeyringTokenStore` now writes the tokens in
+  pieces of 1000 characters, `<profile>#1` to `#n`, with `<profile>` holding an index, on
+  every platform. Entries written whole by an earlier version still load, and are rewritten
+  in pieces at the next save. Any failure of the keyring backend is now an `AuthError`.
+
 ## [2026.2.4] — 2026-11-10
 
 ### Added
