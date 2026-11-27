@@ -975,6 +975,23 @@ class FakeBff:
             headers={"ETag": '"t1"'},
         )
         s.expect_request(f"{r}/types/blogPost", method="PUT").respond_with_handler(put_type)
+
+        def delete_type(request: Request) -> Response:
+            """As Coho: If-Match is required, a stale one is a conflict, and a type that entries
+            resolve to is kept unless the delete is confirmed."""
+            self._record(request)
+            match = request.headers.get("If-Match")
+            if match is None:
+                return problem(428, "PRECONDITION_REQUIRED", "If-Match required", header="If-Match")
+            if match != '"t1"':
+                return problem(412, "VERSION_CONFLICT", "the type changed since it was read")
+            if request.args.get("confirmDestructive") != "true":
+                return problem(
+                    400, "TYPE_IN_USE", "Type 'blogPost' still has entries", entryCount=5
+                )
+            return Response(status=204)
+
+        s.expect_request(f"{r}/types/blogPost", method="DELETE").respond_with_handler(delete_type)
         s.expect_request(f"{r}/types/newType", method="GET").respond_with_handler(
             lambda req: problem(404, "NOT_FOUND", "no such type")
         )

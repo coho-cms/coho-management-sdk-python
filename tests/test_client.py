@@ -305,6 +305,21 @@ def test_type_put_create_vs_update(coho: Coho, bff: FakeBff) -> None:
         dev.types.put("blogPost", existing.definition)
 
 
+def test_type_delete_sends_the_version_it_read(coho: Coho, bff: FakeBff) -> None:
+    dev = coho.account("acme").project(PROJECT).ref("dev")
+    # With no ETag given, the type is read first and its current one sent: Coho takes no delete
+    # without one.
+    with pytest.raises(e.TypeInUse) as in_use:
+        dev.types.delete("blogPost")
+    assert bff.last().headers.get("If-Match") == '"t1"'
+    assert in_use.value.context["entryCount"] == 5
+    dev.types.delete("blogPost", confirm_destructive=True)
+    assert bff.last().args.get("confirmDestructive") == "true"
+    # An ETag the caller read is sent as it is, so a type changed since is a conflict, not lost.
+    with pytest.raises(e.VersionConflict):
+        dev.types.delete("blogPost", if_match='"t0"', confirm_destructive=True)
+
+
 def test_a_type_says_whether_it_is_a_content_or_a_component_type() -> None:
     from coho_management_sdk.models import ContentType
 

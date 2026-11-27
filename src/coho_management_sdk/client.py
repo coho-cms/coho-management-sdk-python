@@ -1252,11 +1252,19 @@ class TypesApi:
         resp = self._t.put(f"{self._r.path}/types/{segment(slug)}", body, if_match=etag)
         return m.ContentType.from_dict(resp.body, etag=resp.etag)
 
-    def delete(self, slug: str, *, confirm_destructive: bool = False) -> None:
-        """Tombstone a type. Refused while entries resolve to it unless ``confirm_destructive``."""
+    def delete(
+        self, slug: str, *, confirm_destructive: bool = False, if_match: str | None = None
+    ) -> None:
+        """Tombstone a type. Refused while entries resolve to it unless ``confirm_destructive``.
+
+        Coho takes a type delete only with ``If-Match``, so a concurrent edit is never lost:
+        ``if_match`` names the version it is based on, or the type is read first and its current
+        ETag sent, as a trait's delete does."""
+        etag = if_match or self._current_etag(slug)
         self._t.delete(
             f"{self._r.path}/types/{segment(slug)}",
             params={"confirmDestructive": confirm_destructive or None},
+            if_match=etag,
         )
 
     def _current_etag(self, slug: str) -> str | None:
