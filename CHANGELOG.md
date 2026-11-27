@@ -242,7 +242,8 @@ read-only client that a customer's website installs with a project key.
   Owner-only permissions are applied where the platform has them and skipped where it
   does not.
 
-[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/release-v2026.2.7...HEAD
+[Unreleased]: https://github.com/coho-cms/coho-management-sdk-python/compare/release-v2026.2.10...HEAD
+[2026.2.10]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.10
 [2026.2.7]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.7
 [2026.2.4]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.4
 [2026.2.3]: https://github.com/coho-cms/coho-management-sdk-python/releases/tag/release-v2026.2.3
