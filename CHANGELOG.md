@@ -6,6 +6,17 @@ All notable changes to `coho-management-sdk`. The format follows
 
 ## [Unreleased]
 
+## [2026.2.10] — 2026-11-27
+
+### Fixed
+
+- Deleting a type. Coho takes a type delete only with `If-Match`, and `TypesApi.delete` sent
+  none, so every delete failed with `PreconditionRequired`, and `coho type delete` with it. It
+  now takes `if_match`, and when none is given reads the type first and sends its current
+  ETag, as `TraitsApi.delete` does. The fake server in `coho_management_sdk.testing` answers
+  a type delete as Coho does: 428 without `If-Match`, 412 for a stale one, and `TypeInUse`
+  unless the delete is confirmed.
+
 ## [2026.2.7] — 2026-11-23
 
 ### Fixed
